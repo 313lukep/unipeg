@@ -67,4 +67,12 @@ describe("pickCellSize", () => {
   it("never returns less than 1", () => {
     expect(pickCellSize(makeGrid(48, 48, "#000000"), 10)).toBe(1);
   });
+
+  it("fits BOTH axes of a non-square grid under the target", () => {
+    // Regression: only g.w was consulted, so a 24x30 grid at target 1000
+    // rendered 1230px tall.
+    expect(pickCellSize(makeGrid(24, 30, "#000000"), 1000)).toBe(33); // 30*33 = 990
+    expect(pickCellSize(makeGrid(30, 24, "#000000"), 1000)).toBe(33);
+    expect(pickCellSize(makeGrid(24, 30, "#000000"), 10)).toBe(1);
+  });
 });

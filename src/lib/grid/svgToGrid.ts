@@ -69,13 +69,16 @@ function parseClassFills(svg: string): Map<string, string | null> {
   return fills;
 }
 
-/** Resolve the fill for an element from its own attrs, style attr, class, or inherited fill. */
+/**
+ * Resolve the fill for an element, matching the CSS cascade a browser
+ * applies: inline `style=""` > class rule from a <style> block > the `fill`
+ * presentation attribute > inherited fill from an ancestor.
+ */
 function resolveFill(
   attrs: Record<string, string>,
   classFills: Map<string, string | null>,
   inherited: string | null | undefined,
 ): string | null | undefined {
-  if (attrs.fill !== undefined) return parseFillValue(attrs.fill);
   if (attrs.style !== undefined) {
     const m = /(?:^|;)\s*fill\s*:\s*([^;]+)/.exec(attrs.style);
     if (m) return parseFillValue(m[1]);
@@ -85,6 +88,7 @@ function resolveFill(
       if (classFills.has(cls)) return classFills.get(cls);
     }
   }
+  if (attrs.fill !== undefined) return parseFillValue(attrs.fill);
   return inherited;
 }
 
@@ -118,7 +122,9 @@ function toCell(v: number, scale: number, what: string): number {
  *
  * - fill may come from the rect itself (attribute or style=""), from a CSS
  *   class declared in a <style> block, or be inherited from a <g>/<svg>
- *   ancestor.
+ *   ancestor. Precedence follows the browser cascade: style="" beats a
+ *   class rule, which beats the fill presentation attribute, which beats
+ *   an inherited fill.
  * - viewBox may be "0 0 24 24" or any clean multiple ("0 0 480 480"); all
  *   rect coordinates must land on integer cell boundaries after scaling.
  * - Validates the result is exactly 24x24, fully painted, palette size 2..20.
@@ -158,8 +164,24 @@ export function svgToGridFromRects(svg: string): Grid {
   const classFills = parseClassFills(src);
   const grid = makeGrid(GRID_SIZE, GRID_SIZE, null);
 
-  // Tokenize tags, maintaining an inherited-fill stack for container elements.
-  const fillStack: (string | null | undefined)[] = [undefined];
+  // Tokenize tags, maintaining a stack of {inherited fill, non-rendered?}
+  // frames for container elements. Rects inside non-rendered subtrees
+  // (<defs>, <clipPath>, <mask>, <pattern>, <symbol>, ...) define resources,
+  // not painted geometry — they must not paint cells, and their coordinates
+  // (which may legitimately sit off-lattice) must not be validated.
+  type Frame = { fill: string | null | undefined; hidden: boolean };
+  const stack: Frame[] = [{ fill: undefined, hidden: false }];
+  const NON_RENDERED = new Set([
+    "defs",
+    "clippath",
+    "mask",
+    "pattern",
+    "symbol",
+    "marker",
+    "metadata",
+    "title",
+    "desc",
+  ]);
   const tagRe = /<(\/?)([A-Za-z_][-\w:]*)((?:[^>"']|"[^"]*"|'[^']*')*?)(\/?)>/g;
   let rectCount = 0;
   let m: RegExpExecArray | null;
@@ -167,14 +189,16 @@ export function svgToGridFromRects(svg: string): Grid {
     const [, closing, name, body, selfClosing] = m;
     const lower = name.toLowerCase();
     if (closing) {
-      if (fillStack.length > 1) fillStack.pop();
+      if (stack.length > 1) stack.pop();
       continue;
     }
     const attrs = parseAttrs(body);
-    const inherited = fillStack[fillStack.length - 1];
+    const parent = stack[stack.length - 1];
+    const inherited = parent.fill;
     const fill = resolveFill(attrs, classFills, inherited);
+    const hidden = parent.hidden || NON_RENDERED.has(lower);
 
-    if (lower === "rect") {
+    if (lower === "rect" && !hidden) {
       rectCount++;
       if (fill !== null) {
         // undefined (nothing declared anywhere) -> SVG default fill: black.
@@ -195,11 +219,9 @@ export function svgToGridFromRects(svg: string): Grid {
         }
       }
     }
-    if (!selfClosing && lower !== "rect") {
-      fillStack.push(fill);
-    } else if (!selfClosing && lower === "rect") {
-      // A non-self-closed <rect> still nests until </rect>.
-      fillStack.push(fill);
+    if (!selfClosing) {
+      // Any non-self-closed element (including <rect>) nests until its close tag.
+      stack.push({ fill, hidden });
     }
   }
 

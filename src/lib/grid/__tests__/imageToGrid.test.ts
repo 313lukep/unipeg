@@ -89,6 +89,85 @@ describe("imageToGrid", () => {
     expect(gridsEqual(grid, src)).toBe(true);
   });
 
+  it("recovers 24x24 at every cell size 4..22 with margins near multiples of the period", () => {
+    // Regression: margins whose widths land within tolerance of a multiple of
+    // the cell period used to become lattice inliers via the injected image
+    // boundary points, silently extending the grid with margin rows/cols.
+    const src = unipegGrid();
+    for (let cellPx = 4; cellPx <= 22; cellPx++) {
+      const img = renderToImageData(src, cellPx, {
+        outW: 11 + 24 * cellPx + 13,
+        outH: 11 + 24 * cellPx + 15,
+        marginLeft: 11,
+        marginTop: 11,
+        marginColour: "#404040",
+      });
+      const { grid, cellSizePx, origin } = imageToGrid(img);
+      expect(grid.w, `cellPx=${cellPx} width`).toBe(24);
+      expect(grid.h, `cellPx=${cellPx} height`).toBe(24);
+      expect(grid.palette, `cellPx=${cellPx} palette`).not.toContain("#404040");
+      expect(gridsEqual(grid, src), `cellPx=${cellPx} cells`).toBe(true);
+      expect(cellSizePx).toBeCloseTo(cellPx, 0);
+      expect(origin.x).toBeCloseTo(11, 0);
+      expect(origin.y).toBeCloseTo(11, 0);
+    }
+  });
+
+  it("recovers when the margin width is an exact multiple of the cell period", () => {
+    // Regression: 13px margins at 13px/cell — the image boundary sits exactly
+    // one period outside the art, so it is an exact lattice inlier; only the
+    // colour check can tell the margin cells from art cells.
+    const src = unipegGrid();
+    const img = renderToImageData(src, 13, {
+      outW: 13 + 24 * 13 + 13,
+      outH: 13 + 24 * 13 + 13,
+      marginLeft: 13,
+      marginTop: 13,
+      marginColour: "#404040",
+    });
+    const { grid, origin } = imageToGrid(img);
+    expect(grid.w).toBe(24);
+    expect(grid.h).toBe(24);
+    expect(grid.palette).not.toContain("#404040");
+    expect(gridsEqual(grid, src)).toBe(true);
+    expect(origin.x).toBeCloseTo(13, 0);
+    expect(origin.y).toBeCloseTo(13, 0);
+  });
+
+  it("recovers a non-integer cell size with asymmetric margins", () => {
+    // Regression: 437px of 24 cells (~18.208px/cell) with 17/11 margins used
+    // to come back with the wrong number of columns.
+    const src = unipegGrid();
+    const cellPx = 437 / 24;
+    const img = renderToImageData(src, cellPx, {
+      outW: 17 + 437 + 16,
+      outH: 11 + 437 + 12,
+      marginLeft: 17,
+      marginTop: 11,
+      marginColour: "#404040",
+    });
+    const { grid, cellSizePx } = imageToGrid(img);
+    expect(grid.w).toBe(24);
+    expect(grid.h).toBe(24);
+    expect(grid.palette).not.toContain("#404040");
+    expect(cellSizePx).toBeGreaterThan(17.5);
+    expect(cellSizePx).toBeLessThan(19);
+    expect(gridsEqual(grid, src)).toBe(true);
+  });
+
+  it("recovers an exact 3px/cell render (minimum plausible period)", () => {
+    // Regression: at p=3 the old flat 1.5px inlier tolerance equalled half
+    // the period, and the fit silently locked onto a wrong coarser period on
+    // one axis (72x72 input came back as 24x6).
+    const src = unipegGrid();
+    const img = renderToImageData(src, 3, { outW: 72, outH: 72 });
+    const { grid, cellSizePx } = imageToGrid(img);
+    expect(grid.w).toBe(24);
+    expect(grid.h).toBe(24);
+    expect(cellSizePx).toBeCloseTo(3, 0);
+    expect(gridsEqual(grid, src)).toBe(true);
+  });
+
   it("throws a helpful GridValidationError when no period exists (flat image)", () => {
     const data = new Uint8ClampedArray(64 * 64 * 4);
     for (let i = 0; i < data.length; i += 4) {

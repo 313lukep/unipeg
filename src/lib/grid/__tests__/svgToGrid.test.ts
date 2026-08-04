@@ -88,6 +88,67 @@ describe("svgToGridFromRects", () => {
     expect(() => svgToGridFromRects("<svg><rect/></svg>")).toThrow(GridValidationError);
   });
 
+  it("ignores rects inside non-rendered containers (<defs>, <clipPath>, <mask>)", () => {
+    // Regression: resource rects were painted (and lattice-validated) as if
+    // they were geometry. The clip rect below is even off-lattice — it must
+    // be skipped entirely, not throw.
+    const withDefs = FIXTURE_24.replace(
+      "</svg>",
+      `<defs>
+         <clipPath id="clip"><rect x="0.5" y="0.5" width="10.25" height="10.25"/></clipPath>
+         <mask id="m"><rect x="0" y="0" width="24" height="24" fill="white"/></mask>
+         <pattern id="p" width="4" height="4"><rect x="0" y="0" width="2" height="2" fill="#123456"/></pattern>
+       </defs></svg>`,
+    );
+    const a = svgToGridFromRects(FIXTURE_24);
+    const b = svgToGridFromRects(withDefs);
+    expect(gridsEqual(a, b)).toBe(true);
+    expect(b.palette).not.toContain("#ffffff");
+    expect(b.palette).not.toContain("#123456");
+  });
+
+  it("resolves fill precedence like the browser cascade (style/class beat the fill attribute)", () => {
+    // Regression: the parser used to check the fill presentation attribute
+    // first, inverting the CSS cascade. A browser resolves inline style >
+    // class rule > fill attribute > inherited — the rect parser must match,
+    // or the same SVG yields different grids in node vs the canvas path.
+    const base = (cellRect: string) => `<svg viewBox="0 0 24 24">
+      <style>.c1 { fill: #ff00ff; }</style>
+      <rect x="0" y="0" width="24" height="24" fill="${bg}"/>
+      ${cellRect}
+    </svg>`;
+
+    // style="" beats the fill attribute
+    const styleVsAttr = svgToGridFromRects(
+      base(`<rect x="0" y="0" width="1" height="1" fill="#111111" style="fill:#222222"/>`),
+    );
+    expect(styleVsAttr.cells[0][0]).toBe("#222222");
+
+    // class rule beats the fill attribute
+    const classVsAttr = svgToGridFromRects(
+      base(`<rect x="0" y="0" width="1" height="1" fill="#111111" class="c1"/>`),
+    );
+    expect(classVsAttr.cells[0][0]).toBe("#ff00ff");
+
+    // style="" beats a class rule (already correct — pinned here)
+    const styleVsClass = svgToGridFromRects(
+      base(`<rect x="0" y="0" width="1" height="1" class="c1" style="fill:#222222"/>`),
+    );
+    expect(styleVsClass.cells[0][0]).toBe("#222222");
+
+    // fill attribute still beats an inherited <g> fill
+    const attrVsInherited = svgToGridFromRects(
+      base(`<g fill="#333333"><rect x="0" y="0" width="1" height="1" fill="#111111"/></g>`),
+    );
+    expect(attrVsInherited.cells[0][0]).toBe("#111111");
+
+    // class rule beats an inherited <g> fill (already correct — pinned here)
+    const classVsInherited = svgToGridFromRects(
+      base(`<g fill="#333333"><rect x="0" y="0" width="1" height="1" class="c1"/></g>`),
+    );
+    expect(classVsInherited.cells[0][0]).toBe("#ff00ff");
+  });
+
   it("throws on rects outside the viewBox", () => {
     const out = `<svg viewBox="0 0 24 24">
       <rect x="0" y="0" width="24" height="24" fill="#ffffff"/>

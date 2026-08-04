@@ -79,9 +79,10 @@ export function rasteriseToCanvas(g: Grid, cellSize: number): HTMLCanvasElement 
 }
 
 /**
- * Largest integer cellSize with g.w * cellSize <= target, minimum 1 — so
- * exports land at or just under the target dimension (e.g. 1000x1000).
+ * Largest integer cellSize with max(g.w, g.h) * cellSize <= target, minimum
+ * 1 — so exports land at or just under the target dimension (e.g. 1000x1000)
+ * on BOTH axes, including non-square grids.
  */
 export function pickCellSize(g: Grid, target: number): number {
-  return Math.max(1, Math.floor(target / g.w));
+  return Math.max(1, Math.floor(target / Math.max(g.w, g.h)));
 }
