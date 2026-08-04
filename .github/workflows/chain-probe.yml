@@ -1,0 +1,25 @@
+name: chain-probe
+on:
+  push:
+    branches: [chain-probe]
+permissions:
+  contents: write
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Run chain probe
+        working-directory: probe
+        run: node chainprobe.mjs
+      - name: Commit results
+        run: |
+          git config user.name "chain-probe-bot"
+          git config user.email "actions@github.com"
+          git add probe/out
+          git commit -m "chain-probe results [skip ci]" || echo "nothing to commit"
+          git push origin HEAD:chain-probe
