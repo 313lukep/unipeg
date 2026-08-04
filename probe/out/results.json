@@ -1,0 +1,122 @@
+{
+  "steps": {
+    "token.hook()": {
+      "ok": true,
+      "value": "0xe54082dfbf044b6a8f584bdddb90a22d5613c440"
+    },
+    "token.imageParams()": {
+      "ok": true,
+      "value": "0xe54082dfbf044b6a8f584bdddb90a22d5613c440"
+    },
+    "token.UpegsTotalCount()": {
+      "ok": true,
+      "value": "388199"
+    },
+    "token.HoldersCount()": {
+      "ok": true,
+      "value": "1441"
+    },
+    "token.UNIT_PER_UPEG()": {
+      "ok": true,
+      "value": "1000000000000000000"
+    },
+    "token.totalSupply()": {
+      "ok": true,
+      "value": "10000000000000000000000"
+    },
+    "token.decimals()": {
+      "ok": true,
+      "value": "18"
+    },
+    "token.tokenURI(1) (expect revert)": {
+      "ok": false,
+      "error": "Error: https://eth.drpc.org: {\"message\":\"execution reverted\",\"code\":3,\"data\":\"0x\"}"
+    },
+    "token.Holder(base)": {
+      "ok": true,
+      "value": {
+        "holder": "0x0937aa6d83c851d506433ab342387a337c8b512a",
+        "indexBase": 0
+      }
+    },
+    "token.OwnerUpegsCount(0x0937aa6d83c851d506433ab342387a337c8b512a)": {
+      "ok": true,
+      "value": "1"
+    },
+    "token.OwnerUpeg(holder0, base)": {
+      "ok": true,
+      "value": {
+        "id": "381204",
+        "seed": "1045347488804167577416439132397821415654657",
+        "indexBase": 0
+      }
+    },
+    "token.OwnerUpegsPage(holder0, page=0, size=2)": {
+      "ok": true,
+      "value": [
+        {
+          "id": "381204",
+          "seed": "1045347488804167577416439132397821415654657"
+        }
+      ]
+    },
+    "token.OwnerUpegsPage(holder0, page=1, size=2)": {
+      "ok": true,
+      "value": []
+    },
+    "mid holder upeg": {
+      "ok": true,
+      "value": {
+        "holderIndex": "720",
+        "holder": "0xe729afdbe4b4c2212eeb5fb3e7cda568da54c4e4",
+        "id": "387431",
+        "seed": "1742245719123495835637876029059159537221636"
+      }
+    },
+    "hook.generate(seed of first upeg)": {
+      "ok": true,
+      "value": "saved out/sample.svg (3277 chars)"
+    },
+    "hook.generate(seed of mid upeg)": {
+      "ok": true,
+      "value": "saved out/sample2.svg (4271 chars)"
+    },
+    "hook.getImageParams() raw": {
+      "ok": true,
+      "value": "saved out/image_params.hex (384 bytes)"
+    },
+    "blockscout source token": {
+      "ok": true,
+      "value": {
+        "name": "Unipeg",
+        "compiler": "v0.8.33+commit.64118f21",
+        "hasAbi": true,
+        "files": 10
+      }
+    },
+    "sourcify source token": {
+      "ok": false,
+      "error": "Error: https://sourcify.dev/server/files/any/1/0x44b28991b167582f18ba0259e0173176ca125505 -> HTTP 503"
+    },
+    "blockscout source hook": {
+      "ok": true,
+      "value": {
+        "name": "UpegHook",
+        "compiler": "v0.8.33+commit.64118f21",
+        "hasAbi": true,
+        "files": 50
+      }
+    },
+    "sourcify source hook": {
+      "ok": false,
+      "error": "Error: https://sourcify.dev/server/files/any/1/0xe54082dfbf044b6a8f584bdddb90a22d5613c440 -> HTTP 503"
+    }
+  },
+  "rpcUsed": "https://ethereum-rpc.publicnode.com",
+  "errors": [
+    "token.tokenURI(1) (expect revert): Error: https://eth.drpc.org: {\"message\":\"execution reverted\",\"code\":3,\"data\":\"0x\"}",
+    "sourcify source token: Error: https://sourcify.dev/server/files/any/1/0x44b28991b167582f18ba0259e0173176ca125505 -> HTTP 503",
+    "sourcify source hook: Error: https://sourcify.dev/server/files/any/1/0xe54082dfbf044b6a8f584bdddb90a22d5613c440 -> HTTP 503"
+  ],
+  "hookAddr": "0xe54082dfbf044b6a8f584bdddb90a22d5613c440"
+}
