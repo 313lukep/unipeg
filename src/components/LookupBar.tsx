@@ -45,7 +45,7 @@ export default function LookupBar({ onLookup, onInvalid, busy }: LookupBarProps)
         spellCheck={false}
         enterKeyHint="go"
         aria-label="Piece number"
-        className="h-[var(--control-h)] min-h-[44px] w-full min-w-0 flex-1 border-2 border-line bg-card px-3 font-mono text-[15px] text-ink placeholder:text-mute"
+        className="h-[var(--control-h)] min-h-[44px] w-full min-w-0 flex-1 border-2 border-line bg-card px-3 font-mono text-[16px] text-ink placeholder:text-mute"
       />
       <Pill
         variant="ink"
