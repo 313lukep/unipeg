@@ -332,9 +332,8 @@ export default function Home() {
           </div>
           <div className="min-w-0 lg:col-start-2 lg:row-start-1">
             <p className="text-[13px] leading-relaxed text-mute">
-              Load a piece by number, tap a recent one, or drop a screenshot —
-              then fit the whole unicorn in X&rsquo;s circle or cut a head
-              sticker.
+              Load a piece by number — then fit the whole unicorn in the
+              circle or cut a head sticker.
             </p>
           </div>
         </div>
