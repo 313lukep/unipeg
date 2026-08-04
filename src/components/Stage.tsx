@@ -207,14 +207,6 @@ export default function Stage({
               }}
             />
           )}
-          {phase === "idle" && (
-            <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
-              <p className="font-display text-[clamp(18px,4vw,28px)] font-bold uppercase tracking-wide text-mute">
-                Pick your peg
-              </p>
-            </div>
-          )}
-
           {/* sticker mode: the crop selection, snapped to whole cells */}
           {loaded && measured && mode === "sticker" && selection !== null && (
             <CropBox

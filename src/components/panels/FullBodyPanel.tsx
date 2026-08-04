@@ -299,17 +299,12 @@ export function FullBodyProvider({ children, ...props }: FullBodyProviderProps) 
   return <Ctx.Provider value={engine}>{children}</Ctx.Provider>;
 }
 
-function PreviewCard({
-  label,
-  children,
-}: {
-  label: string;
-  children: ReactNode;
-}) {
+/* Label row removed so the preview square top-aligns exactly with the
+   stage beside it (owner: symmetric main row). */
+function PreviewCard({ children }: { children: ReactNode }) {
   return (
-    <div className="u-fb-card flex min-w-0 flex-1 flex-col gap-[6px] lg:flex-none">
-      <MicroLabel tone="mute">{label}</MicroLabel>
-      <div className="rounded-[12px] bg-card p-[8px]">{children}</div>
+    <div className="u-fb-card flex min-w-0 flex-1 flex-col lg:flex-none">
+      <div>{children}</div>
     </div>
   );
 }
@@ -337,7 +332,7 @@ export function FullBodyPreview() {
     >
       <div className="flex flex-row gap-[8px] lg:flex-col lg:gap-[12px]">
 
-        <PreviewCard label="Pfp">
+        <PreviewCard>
           <div className="relative aspect-square w-full overflow-hidden rounded-full">
             <canvas
               ref={circleRef}
