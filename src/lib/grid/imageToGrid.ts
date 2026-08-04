@@ -15,25 +15,60 @@ import { rgbToHex } from "./colour";
  *     consistent non-integer cell sizes (e.g. a 437px image of 24 cells).
  *     The span of real edges gives a guaranteed "core" art extent; the image
  *     boundaries are only *candidate* extensions (for margin-free crops,
- *     where the art/image edge produces no colour transition);
- *  3. sample each cell near its centre (per-channel median of 5 taps);
- *  4. snap colours to the dominant palette by clustering near-identical
- *     colours;
+ *     where the art/image edge produces no colour transition). If the fitted
+ *     extent leaves an image-boundary strip unexplained AND a low-contrast
+ *     colour transition hides inside that strip (a margin colour within the
+ *     strong edge threshold of the art background — e.g. a white margin
+ *     around pastel art), edge extraction is re-run at a lower threshold and
+ *     the fit that explains more of the image wins;
+ *  3. sample each cell near its centre (per-channel median of 5 taps),
+ *     measuring the sampling noise actually present inside cells while
+ *     doing so;
+ *  4. snap colours to the dominant palette by clustering, with a merge
+ *     radius scaled by the measured sampling noise: exact samples keep exact
+ *     colours (genuinely distinct close shades survive), noisy samples merge
+ *     within a radius proportional to the noise; a tiny stray cluster
+ *     hugging a far larger one is additionally absorbed as noise;
  *  5. verify the boundary-extension cells by colour: a candidate border
  *     row/column whose colours never occur inside the core extent is margin
  *     (a margin width that happens to be a multiple of the cell period is
  *     geometrically indistinguishable from extra art cells — colour
  *     membership is the tie-breaker, and this is the recovery path where
  *     colour heuristics are explicitly allowed) and is trimmed off.
+ *
+ * ACCEPTED AMBIGUITY (documented behaviour, not a defect): a margin painted
+ * in exactly the art's background colour whose width is a whole number of
+ * cells is indistinguishable from a larger canvas. It produces no edge
+ * signal, its boundary sits on the lattice, and its colour legitimately
+ * occurs inside the art, so no geometric or colour signal can tell the two
+ * apart — such a margin is KEPT as extra background cells. A 24x24 art
+ * surrounded by a 2-cell background-coloured margin recovers as 28x28.
  */
 
 export type ImageDataLike = { width: number; height: number; data: Uint8ClampedArray }; // RGBA
 
-const EDGE_CHANNEL_THRESHOLD = 40; // max per-channel difference that still counts as "same colour"
+/** Max per-channel difference that still counts as "same colour" for edges. */
+const EDGE_CHANNEL_THRESHOLD = 40;
+/**
+ * Fallback edge threshold used only when the strong-threshold fit leaves an
+ * image-boundary strip unexplained that provably hides a lower-contrast
+ * transition (see fitAxis). Kept above typical sampling noise so noisy but
+ * healthy inputs never take this path.
+ */
+const LOW_EDGE_CHANNEL_THRESHOLD = 12;
 const MIN_PERIOD = 3; // px — anything finer is not a plausible upscale
 const MAX_CELLS = 128;
 const MIN_CELLS = 4;
-const CLUSTER_DISTANCE = 32; // Euclidean RGB distance for palette snapping
+
+// Palette snapping (step 4). The merge radius adapts to measured sampling
+// noise instead of using a flat distance: flat 32 used to fold genuinely
+// distinct close shades (e.g. #ffb0e0 vs #ff9ad5, distance 24.6) into one
+// colour even when sampling was exact.
+const CLUSTER_DISTANCE_MAX = 32; // radius ceiling for very noisy input (the old flat value)
+const CLUSTER_DISTANCE_MIN = 2; // exact samples: fold only near-identical colours
+const CLUSTER_NOISE_FACTOR = 3; // merge radius per unit of measured per-channel noise
+const STRAY_MERGE_DISTANCE = 8; // a cluster this close to a dominant one may be noise...
+const STRAY_COUNT_RATIO = 8; // ...but only when the dominant one is >= 8x larger
 
 type Lattice = {
   p: number;
@@ -55,17 +90,22 @@ function latticeTolerance(p: number): number {
   return Math.min(0.35 * p, Math.max(1.5, 0.06 * p));
 }
 
-function pixelsDiffer(data: Uint8ClampedArray, i: number, j: number): boolean {
+function pixelsDiffer(
+  data: Uint8ClampedArray,
+  i: number,
+  j: number,
+  threshold: number,
+): boolean {
   return (
-    Math.abs(data[i] - data[j]) > EDGE_CHANNEL_THRESHOLD ||
-    Math.abs(data[i + 1] - data[j + 1]) > EDGE_CHANNEL_THRESHOLD ||
-    Math.abs(data[i + 2] - data[j + 2]) > EDGE_CHANNEL_THRESHOLD ||
-    Math.abs(data[i + 3] - data[j + 3]) > EDGE_CHANNEL_THRESHOLD
+    Math.abs(data[i] - data[j]) > threshold ||
+    Math.abs(data[i + 1] - data[j + 1]) > threshold ||
+    Math.abs(data[i + 2] - data[j + 2]) > threshold ||
+    Math.abs(data[i + 3] - data[j + 3]) > threshold
   );
 }
 
 /** Positions along `axis` where many pixel pairs change colour. */
-function significantEdges(img: ImageDataLike, axis: "x" | "y"): number[] {
+function significantEdges(img: ImageDataLike, axis: "x" | "y", threshold: number): number[] {
   const { width, height, data } = img;
   const size = axis === "x" ? width : height;
   const cross = axis === "x" ? height : width;
@@ -77,7 +117,7 @@ function significantEdges(img: ImageDataLike, axis: "x" | "y"): number[] {
       const [x, y] = axis === "x" ? [s, t] : [t, s];
       const i = (y * width + x) * 4;
       const j = axis === "x" ? i - 4 : i - width * 4;
-      if (pixelsDiffer(data, i, j)) count++;
+      if (pixelsDiffer(data, i, j, threshold)) count++;
     }
     if (count >= minCount) edges.push(s);
   }
@@ -196,7 +236,44 @@ function fitLattice(edges: number[], size: number): Lattice | null {
   return { p, phase, kMin, kMax, kMinCore, kMaxCore };
 }
 
-function median5(v: number[]): number {
+/**
+ * Fit one axis, then validate that the fit explains the full image extent.
+ *
+ * A margin colour within EDGE_CHANNEL_THRESHOLD of the art's background
+ * (e.g. a white margin around pastel art) yields no strong edge at the
+ * margin/art boundary; with an off-lattice margin width the strong-edge fit
+ * then spans only the non-background content, silently cropping the art. So:
+ * when the fitted extent leaves an image-boundary strip unexplained AND
+ * low-threshold edge extraction finds a transition hiding inside that strip,
+ * refit from the low-threshold edges and keep whichever fit explains more of
+ * the image. A genuinely solid margin strip has no transition at any
+ * threshold and never triggers the refit (the colour-verification step trims
+ * it instead), and sampling noise stays below LOW_EDGE_CHANNEL_THRESHOLD.
+ */
+function fitAxis(img: ImageDataLike, axis: "x" | "y"): Lattice | null {
+  const size = axis === "x" ? img.width : img.height;
+  const fit = fitLattice(significantEdges(img, axis, EDGE_CHANNEL_THRESHOLD), size);
+  if (fit === null) return null;
+
+  const tol = latticeTolerance(fit.p);
+  const start = fit.phase + fit.kMin * fit.p;
+  const end = fit.phase + fit.kMax * fit.p;
+  if (start <= tol && end >= size - tol) return fit; // extent reaches both image edges
+
+  const lowEdges = significantEdges(img, axis, LOW_EDGE_CHANNEL_THRESHOLD);
+  const hidden = lowEdges.some((e) => e < start - tol || e > end + tol);
+  if (!hidden) return fit; // the strips are solid margin — nothing unexplained
+
+  const lowFit = fitLattice(lowEdges, size);
+  if (lowFit === null) return fit;
+  const fitSpan = (fit.kMax - fit.kMin) * fit.p;
+  const lowSpan = (lowFit.kMax - lowFit.kMin) * lowFit.p;
+  return lowSpan > fitSpan + tol ? lowFit : fit;
+}
+
+/** Upper median; 0 for an empty list. */
+function median(v: number[]): number {
+  if (v.length === 0) return 0;
   return v.slice().sort((a, b) => a - b)[v.length >> 1];
 }
 
@@ -217,8 +294,8 @@ export function imageToGrid(img: ImageDataLike): {
     );
   }
 
-  const latX = fitLattice(significantEdges(img, "x"), width);
-  const latY = fitLattice(significantEdges(img, "y"), height);
+  const latX = fitAxis(img, "x");
+  const latY = fitAxis(img, "y");
   if (!latX || !latY) {
     throw new GridValidationError(
       "no plausible pixel-grid period found — the image does not look like upscaled " +
@@ -257,58 +334,172 @@ export function imageToGrid(img: ImageDataLike): {
       b.push(data[i + 2]);
       a.push(data[i + 3]);
     }
-    return [median5(r), median5(g), median5(b), median5(a)];
+    return [median(r), median(g), median(b), median(a)];
+  };
+
+  // Sampling-noise probe at a cell centre: the centre pixel and its immediate
+  // right/down neighbours sit inside the same art cell (any period >=
+  // MIN_PERIOD keeps them at least a pixel from the cell border), so a
+  // channel difference between them is sampling noise, not pixel-art
+  // structure. The median over all cells is robust to the occasional
+  // neighbour that crosses a boundary on a non-integer lattice.
+  const probeNoise = (cx: number, cy: number): number => {
+    const x = Math.min(width - 1, Math.max(0, Math.floor(originX + (cx + 0.5) * latX.p)));
+    const y = Math.min(height - 1, Math.max(0, Math.floor(originY + (cy + 0.5) * latY.p)));
+    const i = (y * width + x) * 4;
+    let worst = 0;
+    const neighbours = [
+      (y * width + Math.min(width - 1, x + 1)) * 4,
+      (Math.min(height - 1, y + 1) * width + x) * 4,
+    ];
+    for (const j of neighbours) {
+      for (let ch = 0; ch < 3; ch++) {
+        const d = Math.abs(data[i + ch] - data[j + ch]);
+        if (d > worst) worst = d;
+      }
+    }
+    return worst;
   };
 
   type Sample = { r: number; g: number; b: number } | null;
   const samples: Sample[][] = [];
+  const noiseProbes: number[] = [];
   for (let cy = 0; cy < gh; cy++) {
     const row: Sample[] = [];
     for (let cx = 0; cx < gw; cx++) {
       const [r, g, b, a] = sampleCell(cx, cy);
-      row.push(a < 128 ? null : { r, g, b });
+      if (a < 128) {
+        row.push(null);
+      } else {
+        row.push({ r, g, b });
+        noiseProbes.push(probeNoise(cx, cy));
+      }
     }
     samples.push(row);
   }
 
-  // Snap to the dominant palette: cluster near-identical colours (this is the
-  // recovery path — colour distance is explicitly allowed here).
-  type Cluster = { rs: number[]; gs: number[]; bs: number[]; cr: number; cg: number; cb: number };
-  const clusters: Cluster[] = [];
-  const assign = (s: { r: number; g: number; b: number }): Cluster => {
-    for (const c of clusters) {
-      const d = Math.hypot(s.r - c.cr, s.g - c.cg, s.b - c.cb);
-      if (d <= CLUSTER_DISTANCE) {
-        c.rs.push(s.r);
-        c.gs.push(s.g);
-        c.bs.push(s.b);
-        const n = c.rs.length;
-        c.cr += (s.r - c.cr) / n;
-        c.cg += (s.g - c.cg) / n;
-        c.cb += (s.b - c.cb) / n;
-        return c;
-      }
-    }
-    const fresh: Cluster = { rs: [s.r], gs: [s.g], bs: [s.b], cr: s.r, cg: s.g, cb: s.b };
-    clusters.push(fresh);
-    return fresh;
-  };
-
-  const cellClusters: (Cluster | null)[][] = samples.map((row) =>
-    row.map((s) => (s === null ? null : assign(s))),
+  // Snap to the dominant palette (this is the recovery path — colour distance
+  // is explicitly allowed here). The merge radius scales with the sampling
+  // noise measured above: exact samples cluster (near-)exactly, so genuinely
+  // distinct close shades are preserved; noisy samples merge within a radius
+  // proportional to the noise, capped at the old flat distance.
+  const noise = median(noiseProbes);
+  const mergeDistance = Math.min(
+    CLUSTER_DISTANCE_MAX,
+    Math.max(CLUSTER_DISTANCE_MIN, CLUSTER_NOISE_FACTOR * noise),
   );
 
-  const medianOf = (v: number[]): number => {
-    const s = v.slice().sort((a, b) => a - b);
-    return s[s.length >> 1];
+  type Member = { r: number; g: number; b: number; count: number };
+  type Cluster = { members: Member[]; count: number; cr: number; cg: number; cb: number };
+
+  // Exact-colour histogram, clustered in descending-count order so dominant
+  // colours seed the clusters (stable, order-independent of raster position).
+  const hist = new Map<number, Member>();
+  for (const row of samples) {
+    for (const s of row) {
+      if (s === null) continue;
+      const key = (s.r << 16) | (s.g << 8) | s.b;
+      const m = hist.get(key);
+      if (m) m.count++;
+      else hist.set(key, { r: s.r, g: s.g, b: s.b, count: 1 });
+    }
+  }
+  const distinct = [...hist.entries()].sort((a, b) => b[1].count - a[1].count || a[0] - b[0]);
+
+  const clusters: Cluster[] = [];
+  const clusterByKey = new Map<number, Cluster>();
+  const absorb = (into: Cluster, m: Member): void => {
+    const n = into.count + m.count;
+    into.cr = (into.cr * into.count + m.r * m.count) / n;
+    into.cg = (into.cg * into.count + m.g * m.count) / n;
+    into.cb = (into.cb * into.count + m.b * m.count) / n;
+    into.members.push(m);
+    into.count = n;
+  };
+  for (const [key, m] of distinct) {
+    let best: Cluster | null = null;
+    let bestD = Infinity;
+    for (const c of clusters) {
+      const d = Math.hypot(m.r - c.cr, m.g - c.cg, m.b - c.cb);
+      if (d < bestD) {
+        bestD = d;
+        best = c;
+      }
+    }
+    if (best !== null && bestD <= mergeDistance) {
+      absorb(best, m);
+      clusterByKey.set(key, best);
+    } else {
+      const fresh: Cluster = { members: [m], count: m.count, cr: m.r, cg: m.g, cb: m.b };
+      clusters.push(fresh);
+      clusterByKey.set(key, fresh);
+    }
+  }
+
+  // Stray absorption: a cluster that is BOTH very close to another AND tiny
+  // relative to it is sampling noise (a stray blended cell), not a deliberate
+  // second shade — genuinely distinct colours stay distinct however close
+  // their counts, and a small-but-distant cluster is never folded.
+  const absorbedInto = new Map<Cluster, Cluster>();
+  const resolve = (c: Cluster): Cluster => {
+    let r = c;
+    while (absorbedInto.has(r)) r = absorbedInto.get(r)!;
+    return r;
+  };
+  for (const small of clusters.slice().sort((a, b) => a.count - b.count)) {
+    if (absorbedInto.has(small)) continue;
+    let best: Cluster | null = null;
+    let bestD = Infinity;
+    for (const other of clusters) {
+      if (other === small || absorbedInto.has(other)) continue;
+      const d = Math.hypot(small.cr - other.cr, small.cg - other.cg, small.cb - other.cb);
+      if (d < bestD) {
+        bestD = d;
+        best = other;
+      }
+    }
+    if (
+      best !== null &&
+      bestD <= STRAY_MERGE_DISTANCE &&
+      small.count * STRAY_COUNT_RATIO <= best.count
+    ) {
+      for (const m of small.members) absorb(best, m);
+      absorbedInto.set(small, best);
+    }
+  }
+
+  // Representative colour: weighted per-channel median over cluster members
+  // (equivalent to the median over all samples in the cluster).
+  const weightedMedian = (members: Member[], pick: (m: Member) => number): number => {
+    const vals = members.map((m) => ({ v: pick(m), n: m.count })).sort((a, b) => a.v - b.v);
+    const total = vals.reduce((acc, x) => acc + x.n, 0);
+    const target = total >> 1;
+    let cum = 0;
+    for (const x of vals) {
+      cum += x.n;
+      if (cum > target) return x.v;
+    }
+    return vals[vals.length - 1].v;
   };
   const repHex = new Map<Cluster, string>();
   for (const c of clusters) {
-    repHex.set(c, rgbToHex(medianOf(c.rs), medianOf(c.gs), medianOf(c.bs)));
+    if (absorbedInto.has(c)) continue;
+    repHex.set(
+      c,
+      rgbToHex(
+        weightedMedian(c.members, (m) => m.r),
+        weightedMedian(c.members, (m) => m.g),
+        weightedMedian(c.members, (m) => m.b),
+      ),
+    );
   }
 
-  const cells: (string | null)[][] = cellClusters.map((row) =>
-    row.map((c) => (c === null ? null : repHex.get(c)!)),
+  const cells: (string | null)[][] = samples.map((row) =>
+    row.map((s) => {
+      if (s === null) return null;
+      const key = (s.r << 16) | (s.g << 8) | s.b;
+      return repHex.get(resolve(clusterByKey.get(key)!))!;
+    }),
   );
 
   // Verify the boundary-extension cells by colour and trim margin rows/cols.
