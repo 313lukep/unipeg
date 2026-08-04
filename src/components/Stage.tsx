@@ -16,7 +16,10 @@
  *    off), a 24-step column wipe on entry (.u-wipe-overlay), dashed X-crop
  *    circle in fullbody mode, CropBox overlay in sticker mode.
  *
- * All geometry in integer cells; cellPx is the one device-space conversion.
+ * Static chrome (ghost grid, empty state, circle, counter) is positioned in
+ * percentages of the plate so it renders server-side; only the canvas and
+ * the CropBox need the measured integer cellPx. All geometry stays in whole
+ * cells — cellPx is the one device-space conversion.
  */
 
 import { useEffect, useRef, useState } from "react";
@@ -65,7 +68,8 @@ export default function Stage({
   const cols = grid?.w ?? 24;
   const rows = grid?.h ?? 24;
 
-  // Measure the wrapper; the stage is cellPx * cols wide so cells are exact.
+  // Measure the wrapper; once measured the plate snaps to cellPx * cols so
+  // cells are exact device-independent pixels (canvas + CropBox alignment).
   const wrapRef = useRef<HTMLDivElement | null>(null);
   const [width, setWidth] = useState(0);
   useEffect(() => {
@@ -89,8 +93,7 @@ export default function Stage({
   const reduced = useReducedMotion();
 
   const cellPx = width > 0 ? Math.max(1, Math.floor(width / cols)) : 0;
-  const stageW = cellPx * cols;
-  const stageH = cellPx * rows;
+  const measured = cellPx > 0;
 
   const loaded = phase === "loaded" && grid !== null;
 
@@ -114,170 +117,166 @@ export default function Stage({
   const counterRow = Math.max(0, Math.min(24, loadingRow));
   const counterText = `READING CHAIN — ROW ${String(counterRow).padStart(2, "0")}/24`;
 
-  const circleSize = Math.min(stageW, stageH);
   const showCircle = phase === "idle" || (loaded && mode === "fullbody");
+  // Inscribed circle as percentages — equal device size on both axes.
+  const circleW = (Math.min(cols, rows) / cols) * 100;
+  const circleH = (Math.min(cols, rows) / rows) * 100;
+
+  const pct = (n: number, total: number) => `${(n / total) * 100}%`;
 
   return (
     <div ref={wrapRef} className="w-full">
-      {cellPx > 0 && (
-        <div className="flex flex-col" style={{ width: stageW }}>
-          {/* ruler numerals along the top edge */}
-          <div className="relative h-[16px]" aria-hidden="true">
-            {RULER.filter((n) => n < cols).map((n) => (
-              <span
-                key={n}
-                className="absolute bottom-[2px] font-mono text-[10px] leading-none text-mute"
-                style={{ left: n * cellPx + 1 }}
-              >
-                {n}
-              </span>
-            ))}
-          </div>
+      <div
+        className="flex flex-col"
+        style={measured ? { width: cellPx * cols } : { width: "100%" }}
+      >
+        {/* ruler numerals along the top edge */}
+        <div className="relative h-[16px]" aria-hidden="true">
+          {RULER.filter((n) => n < cols).map((n) => (
+            <span
+              key={n}
+              className="absolute bottom-[2px] font-mono text-[10px] leading-none text-mute"
+              style={{ left: `calc(${pct(n, cols)} + 1px)` }}
+            >
+              {n}
+            </span>
+          ))}
+        </div>
 
-          {/* the plate */}
-          <div
-            className="relative"
-            style={{
-              width: stageW,
-              height: stageH,
-              background: loaded ? "var(--wash)" : "var(--card)",
-            }}
-          >
-            {/* ghost gridlines */}
-            <div
-              aria-hidden="true"
-              className="pointer-events-none absolute inset-0"
-              style={{
-                backgroundImage:
-                  "linear-gradient(to right, var(--line) 1px, transparent 1px)," +
-                  "linear-gradient(to bottom, var(--line) 1px, transparent 1px)",
-                backgroundSize: `${cellPx}px ${cellPx}px`,
-              }}
-            />
-
-            {/* the art, crisp */}
-            {loaded && (
-              <canvas
-                ref={canvasRef}
-                aria-label={`Loaded piece, ${cols} by ${rows} cells`}
-                className="absolute inset-0 h-full w-full [image-rendering:pixelated]"
-              />
-            )}
-
-            {/* the theatre: column wipe, keyed to replay per load */}
-            {loaded && !reduced && (
-              <div key={wipeKey} className="u-wipe-overlay" aria-hidden="true" />
-            )}
-
-            {/* loading: scan-order fill + mono counter (no spinner) */}
-            {phase === "loading" && (
-              <>
-                {reduced ? (
-                  <div
-                    aria-hidden="true"
-                    className="absolute inset-0"
-                    style={{
-                      backgroundImage:
-                        "repeating-conic-gradient(var(--line) 0% 25%, transparent 0% 50%)",
-                      backgroundSize: `${cellPx * 2}px ${cellPx * 2}px`,
-                      opacity: 0.4,
-                    }}
-                  />
-                ) : (
-                  <div
-                    aria-hidden="true"
-                    className="absolute left-0 top-0 w-full"
-                    style={{
-                      height: Math.min(rows, counterRow) * cellPx,
-                      background: "var(--line)",
-                      opacity: 0.4,
-                    }}
-                  />
-                )}
-                <div
-                  className="absolute inset-0 flex items-center justify-center"
-                  role="status"
-                >
-                  <span className="bg-card px-2 py-1 font-mono text-[12px] font-bold leading-none text-ink">
-                    {counterText}
-                  </span>
-                </div>
-              </>
-            )}
-
-            {/* empty state: lone pink pixel where a horn would be */}
-            {phase === "idle" && cols === 24 && rows === 24 && (
-              <span
-                aria-hidden="true"
-                className="absolute bg-pink"
-                style={{
-                  left: 12 * cellPx,
-                  top: 4 * cellPx,
-                  width: cellPx,
-                  height: cellPx,
-                }}
-              />
-            )}
-            {phase === "idle" && (
-              <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
-                <p className="font-display text-[clamp(18px,4vw,28px)] font-bold uppercase tracking-wide text-mute">
-                  Pick your peg
-                </p>
-              </div>
-            )}
-
-            {/* dashed X-crop circle: what X actually keeps */}
-            {showCircle && (
-              <>
-                <span
-                  aria-hidden="true"
-                  className="pointer-events-none absolute rounded-full border border-dashed border-mute"
-                  style={{
-                    width: circleSize,
-                    height: circleSize,
-                    left: (stageW - circleSize) / 2,
-                    top: (stageH - circleSize) / 2,
-                  }}
-                />
-                <span
-                  className="pointer-events-none absolute bg-card px-1"
-                  style={{
-                    left: stageW / 2,
-                    top: (stageH - circleSize) / 2,
-                    transform: "translate(-50%, -50%)",
-                  }}
-                >
-                  <MicroLabel tone="mute">X crop</MicroLabel>
-                </span>
-              </>
-            )}
-
-            {/* sticker mode: the crop selection, snapped to whole cells */}
-            {loaded && mode === "sticker" && selection !== null && (
-              <CropBox
-                rect={selection}
-                onChange={onSelectionChange}
-                cellPx={cellPx}
-                gridW={cols}
-                gridH={rows}
-                minSize={3}
-              />
-            )}
-          </div>
-
-          {/* museum scale bar */}
+        {/* the plate */}
+        <div
+          className="relative"
+          style={{
+            width: "100%",
+            aspectRatio: `${cols} / ${rows}`,
+            background: loaded ? "var(--wash)" : "var(--card)",
+          }}
+        >
+          {/* ghost gridlines */}
           <div
             aria-hidden="true"
-            className="mt-2 flex items-center gap-2 font-mono text-[10px] leading-none text-mute"
-          >
-            <span>|</span>
-            <span className="h-px bg-mute" style={{ width: cellPx * 4 }} />
-            <span>{cols} px</span>
-            <span className="h-px bg-mute" style={{ width: cellPx * 4 }} />
-            <span>|</span>
-          </div>
+            className="pointer-events-none absolute inset-0"
+            style={{
+              backgroundImage:
+                "linear-gradient(to right, var(--line) 1px, transparent 1px)," +
+                "linear-gradient(to bottom, var(--line) 1px, transparent 1px)",
+              backgroundSize: `${100 / cols}% ${100 / rows}%`,
+            }}
+          />
+
+          {/* the art, crisp */}
+          {loaded && measured && (
+            <canvas
+              ref={canvasRef}
+              aria-label={`Loaded piece, ${cols} by ${rows} cells`}
+              className="absolute inset-0 h-full w-full [image-rendering:pixelated]"
+            />
+          )}
+
+          {/* the theatre: column wipe, keyed to replay per load */}
+          {loaded && !reduced && (
+            <div key={wipeKey} className="u-wipe-overlay" aria-hidden="true" />
+          )}
+
+          {/* loading: scan-order fill + mono counter (no spinner) */}
+          {phase === "loading" && (
+            <>
+              {reduced ? (
+                <div
+                  aria-hidden="true"
+                  className="absolute inset-0"
+                  style={{
+                    backgroundImage:
+                      "repeating-conic-gradient(var(--line) 0% 25%, transparent 0% 50%)",
+                    backgroundSize: `${200 / cols}% ${200 / rows}%`,
+                    opacity: 0.4,
+                  }}
+                />
+              ) : (
+                <div
+                  aria-hidden="true"
+                  className="absolute left-0 top-0 w-full"
+                  style={{
+                    height: pct(Math.min(rows, counterRow), rows),
+                    background: "var(--line)",
+                    opacity: 0.4,
+                  }}
+                />
+              )}
+              <div
+                className="absolute inset-0 flex items-center justify-center"
+                role="status"
+              >
+                <span className="bg-card px-2 py-1 font-mono text-[12px] font-bold leading-none text-ink">
+                  {counterText}
+                </span>
+              </div>
+            </>
+          )}
+
+          {/* empty state: lone pink pixel where a horn would be */}
+          {phase === "idle" && cols === 24 && rows === 24 && (
+            <span
+              aria-hidden="true"
+              className="absolute bg-pink"
+              style={{
+                left: pct(12, cols),
+                top: pct(4, rows),
+                width: pct(1, cols),
+                height: pct(1, rows),
+              }}
+            />
+          )}
+          {phase === "idle" && (
+            <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
+              <p className="font-display text-[clamp(18px,4vw,28px)] font-bold uppercase tracking-wide text-mute">
+                Pick your peg
+              </p>
+            </div>
+          )}
+
+          {/* dashed X-crop circle: what X actually keeps */}
+          {showCircle && (
+            <>
+              <span
+                aria-hidden="true"
+                className="pointer-events-none absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 rounded-full border border-dashed border-mute"
+                style={{ width: `${circleW}%`, height: `${circleH}%` }}
+              />
+              <span
+                className="pointer-events-none absolute left-1/2 -translate-x-1/2 -translate-y-1/2 bg-card px-1"
+                style={{ top: `${(100 - circleH) / 2}%` }}
+              >
+                <MicroLabel tone="mute">X crop</MicroLabel>
+              </span>
+            </>
+          )}
+
+          {/* sticker mode: the crop selection, snapped to whole cells */}
+          {loaded && measured && mode === "sticker" && selection !== null && (
+            <CropBox
+              rect={selection}
+              onChange={onSelectionChange}
+              cellPx={cellPx}
+              gridW={cols}
+              gridH={rows}
+              minSize={3}
+            />
+          )}
         </div>
-      )}
+
+        {/* museum scale bar */}
+        <div
+          aria-hidden="true"
+          className="mt-2 flex items-center gap-2 font-mono text-[10px] leading-none text-mute"
+        >
+          <span>|</span>
+          <span className="h-px w-8 bg-mute" />
+          <span>{cols} px</span>
+          <span className="h-px w-8 bg-mute" />
+          <span>|</span>
+        </div>
+      </div>
     </div>
   );
 }

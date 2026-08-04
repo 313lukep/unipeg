@@ -95,11 +95,14 @@ export default function FullBodyPanel({
   const copyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const hexTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Reset per-piece choices when a new grid arrives.
-  useEffect(() => {
+  // Reset per-piece choices when a new grid arrives — the "adjust state
+  // during render" pattern, so no effect and no extra paint of stale state.
+  const [prevGrid, setPrevGrid] = useState(grid);
+  if (prevGrid !== grid) {
+    setPrevGrid(grid);
     setBgMode("auto");
     setRoomPct(DEFAULT_ROOM_PCT);
-  }, [grid]);
+  }
 
   useEffect(() => {
     return () => {

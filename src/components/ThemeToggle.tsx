@@ -20,6 +20,9 @@ export default function ThemeToggle() {
 
   useEffect(() => {
     const current = document.documentElement.getAttribute("data-theme");
+    // Post-hydration sync from the pre-paint script's DOM state. Reading it
+    // any earlier (initializer) would mismatch the server-rendered markup.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setTheme(current === "dark" ? "dark" : "light");
   }, []);
 

@@ -57,7 +57,9 @@ export default function RegistryLine({
 
   const segments: ReactNode[] = [];
 
-  if (piece !== null) {
+  // Recovered pieces carry no real serial (the page passes id 0) — the
+  // registry line then leads with provenance instead of a fake number.
+  if (piece !== null && piece.id >= 1) {
     segments.push(<span key="id">#{piece.id}</span>);
   }
   if (aliveCount !== null) {
