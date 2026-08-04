@@ -320,11 +320,10 @@ export function FullBodyPreview() {
   const f = useFullBody();
   // Local refs registered into engine STATE in an effect — the engine's
   // draw effect re-runs on attach, and no ref crosses a render boundary.
-  const squareRef = useRef<HTMLCanvasElement | null>(null);
   const circleRef = useRef<HTMLCanvasElement | null>(null);
   const { setSquareEl, setCircleEl } = f;
   useEffect(() => {
-    setSquareEl(squareRef.current);
+    setSquareEl(null);
     setCircleEl(circleRef.current);
     return () => {
       setSquareEl(null);
@@ -337,22 +336,6 @@ export function FullBodyPreview() {
       className="flex w-full flex-col gap-[8px]"
     >
       <div className="flex flex-row gap-[8px] lg:flex-col lg:gap-[12px]">
-        <PreviewCard label="Square export">
-          <div className="relative aspect-square w-full">
-            <canvas
-              ref={squareRef}
-              aria-label="Full-body square preview"
-              className="h-full w-full [image-rendering:pixelated]"
-            />
-            {/* X-crop ghost: the inscribed circle of the composed square. */}
-            {f.cropGhost && (
-              <span
-                aria-hidden="true"
-                className="pointer-events-none absolute inset-0 rounded-full border border-dashed border-mute"
-              />
-            )}
-          </div>
-        </PreviewCard>
 
         <PreviewCard label="Pfp">
           <div className="relative aspect-square w-full overflow-hidden rounded-full">
@@ -432,13 +415,7 @@ export function FullBodyControls() {
         {/* crop ghost toggle — gates the preview circle */}
         <div className="flex items-center justify-between gap-2 lg:justify-start">
           <MicroLabel tone="mute">Crop preview</MicroLabel>
-          <Pill
-            variant={f.cropGhost ? "active" : "card"}
-            aria-pressed={f.cropGhost}
-            onClick={() => f.onCropGhostChange(!f.cropGhost)}
-          >
-            PFP CROP {f.cropGhost ? "ON" : "OFF"}
-          </Pill>
+          
         </div>
       </div>
 

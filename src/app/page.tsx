@@ -31,7 +31,6 @@ import Masthead, { BrandBar } from "@/components/Masthead";
 import RegistryLine from "@/components/RegistryLine";
 import LookupBar from "@/components/LookupBar";
 import Stage from "@/components/Stage";
-import RecentLookups, { type RecentEntry } from "@/components/RecentLookups";
 import {
   FullBodyProvider,
   FullBodyPreview,
@@ -63,14 +62,12 @@ import {
 type Phase = "idle" | "loading" | "loaded" | "error";
 type Tool = "fullbody" | "sticker";
 
-const RECENTS_KEY = "unipegpfp.recents";
-const RECENTS_MAX = 8;
 const ROW_TICK_MS = 45;
 
 /** Grid classes shared by both main-row states (loaded and not). */
 const MAIN_ROW_CLASS =
   "mt-[10px] grid grid-cols-1 gap-[10px] " +
-  "lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)] lg:gap-x-[24px] lg:gap-y-[8px]";
+  "lg:grid-cols-2 lg:justify-items-center lg:gap-x-[24px] lg:gap-y-[8px]";
 
 
 /** Head seed with a safe fallback: top-centre square of the grid. */
@@ -112,25 +109,6 @@ function errorCopy(err: unknown): string {
   return "SOMETHING WENT SIDEWAYS — try again.";
 }
 
-function readRecents(): RecentEntry[] {
-  try {
-    const raw = localStorage.getItem(RECENTS_KEY);
-    if (!raw) return [];
-    const parsed: unknown = JSON.parse(raw);
-    if (!Array.isArray(parsed)) return [];
-    return parsed
-      .filter(
-        (e): e is RecentEntry =>
-          typeof e === "object" &&
-          e !== null &&
-          typeof (e as RecentEntry).id === "number" &&
-          typeof (e as RecentEntry).seed === "string",
-      )
-      .slice(0, RECENTS_MAX);
-  } catch {
-    return [];
-  }
-}
 
 export default function Home() {
   const [phase, setPhase] = useState<Phase>("idle");
@@ -145,7 +123,6 @@ export default function Home() {
   const [cropGhost, setCropGhost] = useState(true);
   const [loadingRow, setLoadingRow] = useState(0);
   const [wipeKey, setWipeKey] = useState(0);
-  const [recents, setRecents] = useState<RecentEntry[]>([]);
 
   const loadSeq = useRef(0);
   const rowTimer = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -159,27 +136,7 @@ export default function Home() {
     return stop;
   }, []);
 
-  // Recents from localStorage — post-hydration sync from an external store.
-  // Reading it in the initializer would mismatch the server-rendered markup.
-  useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    setRecents(readRecents());
-  }, []);
 
-  const pushRecent = useCallback((entry: RecentEntry) => {
-    setRecents((prev) => {
-      const next = [entry, ...prev.filter((e) => e.id !== entry.id)].slice(
-        0,
-        RECENTS_MAX,
-      );
-      try {
-        localStorage.setItem(RECENTS_KEY, JSON.stringify(next));
-      } catch {
-        /* quota — recents just don't persist */
-      }
-      return next;
-    });
-  }, []);
 
   // Fake-progress rows while awaiting the chain; snap on resolve.
   const stopRows = useCallback(() => {
@@ -225,7 +182,6 @@ export default function Home() {
         stopRows();
         setLoadingRow(24); // snap
         crown(resolved, g);
-        pushRecent({ id: resolved.id, seed: resolved.seed.toString() });
       } catch (err) {
         if (seq !== loadSeq.current) return;
         stopRows();
@@ -235,7 +191,7 @@ export default function Home() {
         setErrorText(errorCopy(err));
       }
     },
-    [crown, pushRecent, startRows, stopRows],
+    [crown, startRows, stopRows],
   );
 
   const handleInvalid = useCallback(
@@ -280,10 +236,6 @@ export default function Home() {
         <LookupBar onLookup={loadPiece} onInvalid={handleInvalid} busy={busy} />
       </div>
 
-      {/* recent thumbnails */}
-      <div className="mt-[8px]">
-        <RecentLookups entries={recents} onSelect={loadPiece} busy={busy} />
-      </div>
 
       {loaded && grid !== null && selection !== null ? (
         <FullBodyProvider
@@ -296,7 +248,7 @@ export default function Home() {
             <div className={MAIN_ROW_CLASS}>
               {/* MAIN ROW left: the stage (cell-snapped CropBox in sticker
                   mode; dragging it low-reses the sticker preview) */}
-              <div className="min-w-0 lg:col-start-1 lg:row-start-1 lg:max-w-[var(--stage-side)]">
+              <div className="w-full min-w-0 lg:col-start-1 lg:row-start-1 lg:max-w-[var(--stage-side)]">
                 <StickerStageDragLayer active={tool === "sticker"}>
                   <Stage
                     grid={grid}
@@ -313,7 +265,7 @@ export default function Home() {
               {/* MAIN ROW right: the active tool's previews. On mobile this
                   block is sticky under the pinned brand bar (z below its
                   z-50) so the preview stays visible while controls scroll. */}
-              <div className="min-w-0 max-lg:sticky max-lg:top-[88px] max-lg:z-40 max-lg:border-b max-lg:border-line max-lg:bg-paper max-lg:pb-[8px] lg:col-start-2 lg:row-start-1">
+              <div className="w-full min-w-0 max-lg:sticky max-lg:top-[88px] max-lg:z-40 max-lg:border-b max-lg:border-line max-lg:bg-paper max-lg:pb-[8px] lg:col-start-2 lg:row-start-1 lg:max-w-[var(--stage-side)]">
                 <div className={tool === "fullbody" ? "" : "hidden"}>
                   <FullBodyPreview />
                 </div>

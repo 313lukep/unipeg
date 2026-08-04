@@ -228,7 +228,7 @@ body {
      sum to --stage-side. card = canvas + 16px padding; per-card
      overhead label 11 + gap 6 = 17, column gap 12. */
   .u-fb-card {
-    width: calc((var(--stage-side) - 78px) / 2 + 16px);
+    width: 100%;
     max-width: 100%;
   }
   /* Sticker preview: header row (~44) + gap + padding leaves the
