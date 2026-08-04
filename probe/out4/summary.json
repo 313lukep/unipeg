@@ -1,0 +1,57 @@
+{
+  "errors": [],
+  "scan": {
+    "blockNumber": 25682003,
+    "scannedAt": "2026-08-04T14:04:05.884Z",
+    "holdersCount": 1441,
+    "failures": 0,
+    "aliveCount": 6913,
+    "everMinted": 388232,
+    "idMin": 28,
+    "idMax": 388232
+  },
+  "deltaDemo": {
+    "fromBlock": 25676003,
+    "mintedCount": 671,
+    "burnedCount": 633,
+    "transferCount": 374,
+    "sampleMint": [
+      {
+        "block": 25681876,
+        "owner": "0x3554faf0bc3e0809ed94e4303029fbc1cf6b0aa1",
+        "upegId": "388231"
+      },
+      {
+        "block": 25681876,
+        "owner": "0x3554faf0bc3e0809ed94e4303029fbc1cf6b0aa1",
+        "upegId": "388232"
+      }
+    ],
+    "sampleBurn": [
+      {
+        "block": 25681921,
+        "upegId": "383654"
+      },
+      {
+        "block": 25681921,
+        "upegId": "382892"
+      }
+    ],
+    "seedResolutions": [
+      {
+        "upegId": "388231",
+        "owner": "0x3554faf0bc3e0809ed94e4303029fbc1cf6b0aa1",
+        "seed": null,
+        "inFreshScan": null,
+        "agrees": false
+      },
+      {
+        "upegId": "388232",
+        "owner": "0x73d21518b8e390a9d350bbb3cfad99dbbf1a4927",
+        "seed": null,
+        "inFreshScan": "2006645252998390200961906627402909159197189",
+        "agrees": false
+      }
+    ]
+  }
+}
