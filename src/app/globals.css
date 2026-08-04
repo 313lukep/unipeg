@@ -153,6 +153,30 @@ body {
     --piece-c 400ms ease;
 }
 
+/* The theatre: a 24-step column wipe over the stage on load. Base width
+   is 0, the animation runs 100% -> 0 anchored right, so the art reveals
+   left-to-right in whole columns. Under reduced motion the global
+   kill-switch removes the animation and the base width (0) wins — a
+   single-frame cut, exactly per DESIGN.md. */
+@keyframes u-col-wipe {
+  from {
+    width: 100%;
+  }
+  to {
+    width: 0;
+  }
+}
+.u-wipe-overlay {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 0;
+  background: var(--card);
+  animation: u-col-wipe 430ms steps(24, end);
+  pointer-events: none;
+}
+
 /* Reduced-motion kill-switch: every animation and transition dies. */
 @media (prefers-reduced-motion: reduce) {
   *,
