@@ -77,15 +77,12 @@ function formatOutlineCells(v: number): string {
   return `${num} CELL`;
 }
 
-/** Track an element's content width (0 until measured; SSR-safe). */
-function useElementWidth<T extends HTMLElement>(): [
-  React.RefObject<T | null>,
-  number,
-] {
-  const ref = useRef<T | null>(null);
+/** Track an element's content width (0 until attached; SSR-safe). The
+ *  element arrives via state (callback ref in the consumer), so the observer
+ *  re-binds whenever it attaches or swaps. */
+function useElementWidth(el: HTMLElement | null): number {
   const [width, setWidth] = useState(0);
   useEffect(() => {
-    const el = ref.current;
     if (!el) return;
     const ro = new ResizeObserver((entries) => {
       const w = Math.floor(entries[0].contentRect.width);
@@ -93,8 +90,8 @@ function useElementWidth<T extends HTMLElement>(): [
     });
     ro.observe(el);
     return () => ro.disconnect();
-  }, []);
-  return [ref, width];
+  }, [el]);
+  return width;
 }
 
 /** All tool state + compose pipeline, shared by Preview and Controls. */
@@ -145,7 +142,15 @@ function useStickerEngine({
   }, [dragging]);
 
   // ---- measurements ------------------------------------------------------
-  const [previewWrapRef, previewWidth] = useElementWidth<HTMLDivElement>();
+  // Preview elements live in <StickerPreview/>; they register here via
+  // callback refs into STATE, so effects re-run on attach and nothing
+  // ref-shaped crosses the context boundary.
+  const [previewWrapEl, setPreviewWrapEl] = useState<HTMLDivElement | null>(
+    null,
+  );
+  const [previewCanvasEl, setPreviewCanvasEl] =
+    useState<HTMLCanvasElement | null>(null);
+  const previewWidth = useElementWidth(previewWrapEl);
   // Lazy init, SSR-guarded; dpr only ever feeds effect-driven canvas sizing,
   // so a server/client difference cannot cause a markup mismatch.
   const [dpr] = useState(() =>
@@ -220,9 +225,8 @@ function useStickerEngine({
   }, [grid, selection, visualOpts, previewPx]);
 
   // ---- cheap redraw of the composed canvas (mask toggle costs nothing) ---
-  const previewCanvasRef = useRef<HTMLCanvasElement | null>(null);
   useEffect(() => {
-    const cv = previewCanvasRef.current;
+    const cv = previewCanvasEl;
     if (!cv) return;
     const src = composedRef.current;
     const px = src?.width ?? previewPx;
@@ -242,7 +246,7 @@ function useStickerEngine({
     }
     ctx.drawImage(src, 0, 0);
     ctx.restore();
-  }, [composedTick, circleMask, previewPx]);
+  }, [composedTick, circleMask, previewPx, previewCanvasEl]);
 
   // ---- export ------------------------------------------------------------
   const filename =
@@ -304,18 +308,6 @@ function useStickerEngine({
     }
   }, [busy, grid, selection, visualOpts, exportSize, flash]);
 
-  // Callback refs (not RefObjects) so the engine object stays ref-free —
-  // consumers attach elements without touching ref values during render.
-  const attachPreviewWrap = useCallback(
-    (el: HTMLDivElement | null) => {
-      previewWrapRef.current = el;
-    },
-    [previewWrapRef],
-  );
-  const attachPreviewCanvas = useCallback((el: HTMLCanvasElement | null) => {
-    previewCanvasRef.current = el;
-  }, []);
-
   return {
     selection,
     outlineWidth,
@@ -346,8 +338,8 @@ function useStickerEngine({
     copyLabel,
     busy,
     beginDrag,
-    attachPreviewWrap,
-    attachPreviewCanvas,
+    setPreviewWrapEl,
+    setPreviewCanvasEl,
     composeError,
     filename,
     handleDownload,
@@ -390,6 +382,20 @@ export function StickerStageDragLayer({
 /** Live sticker preview with its X CROP toggle and the crop readout. */
 export function StickerPreview() {
   const s = useSticker();
+  // Local refs registered into engine STATE in an effect — the engine's
+  // measure/draw effects re-run on attach, and no ref crosses a render
+  // boundary.
+  const wrapRef = useRef<HTMLDivElement | null>(null);
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const { setPreviewWrapEl, setPreviewCanvasEl, composeError } = s;
+  useEffect(() => {
+    setPreviewWrapEl(wrapRef.current);
+    setPreviewCanvasEl(canvasRef.current);
+    return () => {
+      setPreviewWrapEl(null);
+      setPreviewCanvasEl(null);
+    };
+  }, [setPreviewWrapEl, setPreviewCanvasEl, composeError]);
   return (
     <section
       aria-label="Sticker preview"
@@ -412,7 +418,7 @@ export function StickerPreview() {
         </Pill>
       </div>
       <div
-        ref={s.attachPreviewWrap}
+        ref={wrapRef}
         className="u-sticker-preview w-full bg-card p-[8px]"
         style={{ borderRadius: 12 }}
       >
@@ -422,7 +428,7 @@ export function StickerPreview() {
           </p>
         ) : (
           <canvas
-            ref={s.attachPreviewCanvas}
+            ref={canvasRef}
             aria-label="Live sticker preview"
             className="block h-auto w-full"
             style={{ imageRendering: "pixelated" }}

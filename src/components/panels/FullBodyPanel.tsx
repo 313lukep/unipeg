@@ -101,8 +101,11 @@ function useFullBodyEngine({
   );
   const [hexFlash, setHexFlash] = useState(false);
 
-  const squareRef = useRef<HTMLCanvasElement | null>(null);
-  const circleRef = useRef<HTMLCanvasElement | null>(null);
+  // The preview canvases live in <FullBodyPreview/>; they register here via
+  // callback refs into STATE (not refs), so the draw effect re-runs when
+  // they attach and nothing ref-shaped ever crosses the context boundary.
+  const [squareEl, setSquareEl] = useState<HTMLCanvasElement | null>(null);
+  const [circleEl, setCircleEl] = useState<HTMLCanvasElement | null>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const savedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const copyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -161,13 +164,13 @@ function useFullBodyEngine({
           bg: bgOverride,
           targetPx,
         });
-        blit(canvas, squareRef.current);
-        blit(canvas, circleRef.current);
+        blit(canvas, squareEl);
+        blit(canvas, circleEl);
       } catch {
         /* pre-flight covers the known failure modes; never loop on state */
       }
     },
-    [grid, roomPct, bgOverride, compositionError],
+    [grid, roomPct, bgOverride, compositionError, squareEl, circleEl],
   );
 
   // Low-res immediately on any input change (feels live while dragging),
@@ -255,15 +258,6 @@ function useFullBodyEngine({
     hexTimerRef.current = setTimeout(() => setHexFlash(false), 300);
   }, [detectedBg]);
 
-  // Callback refs (not RefObjects) so the engine object stays ref-free —
-  // consumers attach canvases without touching ref values during render.
-  const attachSquare = useCallback((el: HTMLCanvasElement | null) => {
-    squareRef.current = el;
-  }, []);
-  const attachCircle = useCallback((el: HTMLCanvasElement | null) => {
-    circleRef.current = el;
-  }, []);
-
   return {
     cropGhost,
     onCropGhostChange,
@@ -279,8 +273,8 @@ function useFullBodyEngine({
     hexFlash,
     detectedBg,
     compositionError,
-    attachSquare,
-    attachCircle,
+    setSquareEl,
+    setCircleEl,
     filename,
     handleDownload,
     handleCopy,
@@ -324,6 +318,19 @@ function PreviewCard({
  *  sticky preview stays shallow. Both blit from the same composed canvas. */
 export function FullBodyPreview() {
   const f = useFullBody();
+  // Local refs registered into engine STATE in an effect — the engine's
+  // draw effect re-runs on attach, and no ref crosses a render boundary.
+  const squareRef = useRef<HTMLCanvasElement | null>(null);
+  const circleRef = useRef<HTMLCanvasElement | null>(null);
+  const { setSquareEl, setCircleEl } = f;
+  useEffect(() => {
+    setSquareEl(squareRef.current);
+    setCircleEl(circleRef.current);
+    return () => {
+      setSquareEl(null);
+      setCircleEl(null);
+    };
+  }, [setSquareEl, setCircleEl]);
   return (
     <section
       aria-label="Full-Body Fit preview"
@@ -333,7 +340,7 @@ export function FullBodyPreview() {
         <PreviewCard label="Square export">
           <div className="relative aspect-square w-full">
             <canvas
-              ref={f.attachSquare}
+              ref={squareRef}
               aria-label="Full-body square preview"
               className="h-full w-full [image-rendering:pixelated]"
             />
@@ -355,7 +362,7 @@ export function FullBodyPreview() {
         <PreviewCard label="On X">
           <div className="relative aspect-square w-full overflow-hidden rounded-full">
             <canvas
-              ref={f.attachCircle}
+              ref={circleRef}
               aria-label="Full-body preview inside X's circular crop"
               className="h-full w-full [image-rendering:pixelated]"
             />
