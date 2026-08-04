@@ -90,7 +90,9 @@ export default function Stage({
 
   const reduced = useReducedMotion();
 
-  const cellPx = width > 0 ? Math.max(1, Math.floor(width / cols)) : 0;
+  // Fractional cellPx: the plate fills its wrapper exactly (matches the
+  // preview square beside it); CropBox rounds drags to whole cells anyway.
+  const cellPx = width > 0 ? width / cols : 0;
   const measured = cellPx > 0;
 
   const loaded = phase === "loaded" && grid !== null;
@@ -102,7 +104,7 @@ export default function Stage({
     if (!loaded || grid === null || cellPx <= 0) return;
     const cv = canvasRef.current;
     if (!cv) return;
-    const dev = Math.max(1, Math.round(cellPx * dpr));
+    const dev = Math.max(1, Math.round(Math.floor(cellPx) * dpr));
     cv.width = grid.w * dev;
     cv.height = grid.h * dev;
     const ctx = cv.getContext("2d");
@@ -119,10 +121,7 @@ export default function Stage({
 
   return (
     <div ref={wrapRef} className="w-full">
-      <div
-        className="flex flex-col"
-        style={measured ? { width: cellPx * cols } : { width: "100%" }}
-      >
+      <div className="flex w-full flex-col">
         {/* the plate */}
         <div
           className="relative"

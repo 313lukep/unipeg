@@ -142,6 +142,9 @@ body {
 
 /* Slider focus: the invisible native input carries focus; the visible
    square thumb wears the ring. */
+.u-slider-input {
+  touch-action: none;
+}
 .u-slider-input:focus-visible {
   outline: none;
 }

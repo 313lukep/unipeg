@@ -311,7 +311,7 @@ export default function Home() {
         </FullBodyProvider>
       ) : (
         <div className={MAIN_ROW_CLASS}>
-          <div className="flex min-w-0 flex-col gap-[10px] lg:col-start-1 lg:row-start-1 lg:max-w-[var(--stage-side)]">
+          <div className="flex w-full min-w-0 flex-col gap-[10px] lg:col-start-1 lg:row-start-1 lg:max-w-[var(--stage-side)]">
             <Stage
               grid={grid}
               phase={phase}
