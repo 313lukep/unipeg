@@ -6,10 +6,28 @@ import "@fontsource/space-mono/400.css";
 import "@fontsource/space-mono/700.css";
 import "./globals.css";
 
+const SITE_URL = "https://upegpfp.art";
+const DESCRIPTION =
+  "Turn your Unipeg into a profile picture that survives the crop.";
+
 export const metadata: Metadata = {
+  metadataBase: new URL(SITE_URL),
   title: "unipegPFP",
-  description:
-    "Turn your Unipeg into a profile picture that survives the crop.",
+  description: DESCRIPTION,
+  openGraph: {
+    title: "unipegPFP",
+    description: DESCRIPTION,
+    url: SITE_URL,
+    siteName: "unipegPFP",
+    type: "website",
+    images: [{ url: "/og.png", width: 1200, height: 630, alt: "unipegPFP — make your Unipeg your PFP" }],
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "unipegPFP",
+    description: DESCRIPTION,
+    images: ["/og.png"],
+  },
 };
 
 /**
