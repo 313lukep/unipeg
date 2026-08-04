@@ -13,13 +13,13 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 20
-      - name: Run round 2 probe
+      - name: Run round 3 probe
         working-directory: probe
-        run: node round2.mjs
+        run: node round3.mjs
       - name: Commit results
         run: |
           git config user.name "chain-probe-bot"
           git config user.email "actions@github.com"
-          git add probe/out probe/out2
-          git commit -m "chain-probe round 2 results [skip ci]" || echo "nothing to commit"
+          git add probe/out probe/out2 probe/out3
+          git commit -m "chain-probe round 3 results [skip ci]" || echo "nothing to commit"
           git push origin HEAD:chain-probe
