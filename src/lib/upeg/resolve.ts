@@ -32,34 +32,18 @@ export type ResolveDeps = {
   totalCount: () => Promise<number>;
 };
 
-const ALIVE_URL = "/data/upeg-alive.json";
 const LS_PIECE_PREFIX = "unipegpfp.piece.";
 const LS_PIECE_INDEX = "unipegpfp.piece-ids";
 const MEMORY_LRU_MAX = 60;
 const LS_MAX_PIECES = 40;
 
-let aliveMapPromise: Promise<AliveMap> | undefined;
-
-async function fetchAliveMap(): Promise<AliveMap> {
-  const res = await fetch(ALIVE_URL);
-  if (!res.ok) {
-    throw new UpegLookupError(
-      "dataset-unavailable",
-      `Alive-piece snapshot failed to load (HTTP ${res.status})`,
-    );
-  }
-  return (await res.json()) as AliveMap;
-}
-
-/** Cached across the session — the snapshot is a static asset. */
+/**
+ * The alive map now lives in ./alive (baseline snapshot + live event delta,
+ * see delta.ts). This wrapper keeps the resolver's dependency injectable.
+ */
 export function loadAliveMapOnce(): Promise<AliveMap> {
-  if (!aliveMapPromise) {
-    aliveMapPromise = fetchAliveMap().catch((err) => {
-      aliveMapPromise = undefined; // allow retry after a failure
-      throw err;
-    });
-  }
-  return aliveMapPromise;
+  // Deferred import avoids a resolve <-> alive <-> delta cycle at module load.
+  return import("./alive").then((m) => m.getAliveMap());
 }
 
 const memoryCache = new Map<number, UpegPiece>(); // insertion-ordered => LRU
@@ -199,6 +183,5 @@ export async function resolvePiece(
 
 /** Test hook: clear module-level caches. */
 export function __resetResolveCaches(): void {
-  aliveMapPromise = undefined;
   memoryCache.clear();
 }

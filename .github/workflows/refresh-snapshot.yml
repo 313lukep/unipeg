@@ -1,0 +1,48 @@
+# Refreshes the alive-piece snapshot on a schedule.
+#
+# GitHub's minimum cron interval is 5 minutes (and scheduled runs only fire
+# from the DEFAULT branch, so this activates once merged). That is fine:
+# the app itself replays on-chain mint/burn events on top of whatever
+# baseline it has (see src/lib/upeg/delta.ts), so users are always
+# seconds-fresh — this job just keeps the baseline close so deltas stay tiny.
+#
+# Results are force-pushed as a single commit to the `data-live` branch
+# (no history growth, no redeploy churn). Point
+# NEXT_PUBLIC_LIVE_SNAPSHOT_URL at the raw URL of
+# data-live:public/data/upeg-live.json to serve the freshest baseline
+# (requires a public repo; with a private repo the bundled baseline + event
+# delta already covers freshness).
+name: refresh-snapshot
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+permissions:
+  contents: write
+concurrency:
+  group: refresh-snapshot
+  cancel-in-progress: false
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Scan alive pieces
+        run: node scripts/scan-alive.mjs public/data
+      - name: Publish to data-live branch (single squashed commit)
+        run: |
+          git config user.name "snapshot-bot"
+          git config user.email "actions@github.com"
+          git checkout --orphan data-live-next
+          git rm -rf --cached . >/dev/null
+          mkdir -p publish/public/data
+          cp public/data/upeg-alive.json publish/public/data/
+          cp public/data/upeg-alive.meta.json publish/public/data/
+          cp out/upeg-live.json publish/public/data/
+          git add -f publish
+          git commit -m "alive snapshot $(date -u +%FT%TZ) [skip ci]"
+          git push -f origin HEAD:data-live
