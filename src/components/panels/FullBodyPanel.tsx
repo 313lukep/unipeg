@@ -346,15 +346,10 @@ export function FullBodyPreview() {
             />
             {/* X-crop ghost: the inscribed circle of the composed square. */}
             {f.cropGhost && (
-              <>
-                <span
-                  aria-hidden="true"
-                  className="pointer-events-none absolute inset-0 rounded-full border border-dashed border-mute"
-                />
-                <span className="pointer-events-none absolute left-1/2 top-0 -translate-x-1/2 -translate-y-1/2 bg-card px-1">
-                  <MicroLabel tone="mute">pfp crop</MicroLabel>
-                </span>
-              </>
+              <span
+                aria-hidden="true"
+                className="pointer-events-none absolute inset-0 rounded-full border border-dashed border-mute"
+              />
             )}
           </div>
         </PreviewCard>
