@@ -77,6 +77,34 @@ function formatOutlineCells(v: number): string {
   return `${num} CELL`;
 }
 
+/** Cheap redraw of the composed sticker onto the visible preview canvas,
+ *  optionally clipped to X's circle. Resizing resets context state, so
+ *  smoothing is re-disabled after every resize. */
+function redrawPreview(
+  cv: HTMLCanvasElement,
+  src: HTMLCanvasElement | null,
+  fallbackPx: number,
+  circleMask: boolean,
+): void {
+  const px = src?.width ?? fallbackPx;
+  cv.width = px;
+  cv.height = px;
+  const ctx = cv.getContext("2d");
+  if (!ctx) return;
+  // resize reset the context — smoothing off before any draw
+  ctx.imageSmoothingEnabled = false;
+  ctx.clearRect(0, 0, px, px);
+  if (!src) return;
+  ctx.save();
+  if (circleMask) {
+    ctx.beginPath();
+    ctx.arc(px / 2, px / 2, px / 2, 0, Math.PI * 2);
+    ctx.clip();
+  }
+  ctx.drawImage(src, 0, 0);
+  ctx.restore();
+}
+
 /** Track an element's content width (0 until attached; SSR-safe). The
  *  element arrives via state (callback ref in the consumer), so the observer
  *  re-binds whenever it attaches or swaps. */
@@ -226,26 +254,8 @@ function useStickerEngine({
 
   // ---- cheap redraw of the composed canvas (mask toggle costs nothing) ---
   useEffect(() => {
-    const cv = previewCanvasEl;
-    if (!cv) return;
-    const src = composedRef.current;
-    const px = src?.width ?? previewPx;
-    cv.width = px;
-    cv.height = px;
-    const ctx = cv.getContext("2d");
-    if (!ctx) return;
-    // resize reset the context — smoothing off before any draw
-    ctx.imageSmoothingEnabled = false;
-    ctx.clearRect(0, 0, px, px);
-    if (!src) return;
-    ctx.save();
-    if (circleMask) {
-      ctx.beginPath();
-      ctx.arc(px / 2, px / 2, px / 2, 0, Math.PI * 2);
-      ctx.clip();
-    }
-    ctx.drawImage(src, 0, 0);
-    ctx.restore();
+    if (!previewCanvasEl) return;
+    redrawPreview(previewCanvasEl, composedRef.current, previewPx, circleMask);
   }, [composedTick, circleMask, previewPx, previewCanvasEl]);
 
   // ---- export ------------------------------------------------------------
