@@ -3,20 +3,28 @@
  *
  * Order is sacred and matches the build spec exactly:
  *
- *   crop -> keyOut(bg) -> dilate(outlineWidth, outlineColour)
- *        [-> optional second dilate(1, darker tone)]
- *        -> rasterise to offscreen at final scale, smoothing OFF
+ *   crop -> keyOut(bg)                       (grid cells, integers)
+ *        -> rasterise at integer cellPx, smoothing OFF
+ *        -> OUTLINE AT RASTER LEVEL: binary-alpha square-kernel dilation of
+ *           radius round(outlineWidth * cellPx) device pixels, filled with
+ *           outlineColour, drawn UNDER the sticker pixels. The raster is
+ *           padded by the dilation radius per side first so nothing clips.
+ *           Implemented as a separable two-pass over the binary alpha mask —
+ *           hard-edged, zero blur, zero antialiasing by construction.
+ *        [-> optional second darker band (two-tone) at outer radius
+ *            round(outlineWidth * cellPx) + round(0.25 * cellPx)]
  *        -> THEN rotate (rotation AFTER upscale) via a manual nearest-
  *           neighbour inverse mapping — NOT ctx.rotate()+drawImage, which
  *           antialiases the rotated edge geometry in Chromium regardless of
  *           imageSmoothingEnabled=false
  *        -> composite onto background
- *        -> optional drop shadow from the rotated sticker's alpha.
+ *        -> optional drop shadow from the rotated sticker's alpha (soft OK).
  *
- * All geometry stays in integer grid cells until the single rasterise step.
- * NOTE: grid-lib `dilate` EXPANDS the grid by `radius` per side — every
- * scale/centring computation below therefore uses the *dilated* grid's w/h,
- * never the selection's.
+ * Sizing: cellPx derives from the UNROTATED outlined sticker dimensions, so
+ * "size in frame" means the same at every tilt — rotating never shrinks the
+ * sticker. The rotated layer itself is composed in the full frame; corners
+ * that poke past the frame at high tilt+scale simply crop at the frame edge
+ * (standard sticker behaviour).
  */
 
 import type { CellRect, Grid } from "@/lib/grid";
@@ -26,19 +34,27 @@ import {
   crop,
   darken,
   detectBackground,
-  dilate,
   dominantBodyColour,
   hexToRgb,
   keyOut,
-  rasteriseToCanvas,
 } from "@/lib/grid";
 
 export type StickerOpts = {
-  /** outline thickness in cells around the keyed-out head */
-  outlineWidth: 0 | 1 | 2 | 3;
+  /**
+   * Outline thickness in CELLS around the keyed-out head. Fractional values
+   * are supported: the outline is applied at raster level as a binary-alpha
+   * square-kernel dilation of round(outlineWidth * cellPx) device pixels.
+   * Valid range 0..1.5 in 0.25 steps (default 0.5); out-of-range or off-step
+   * values are defensively clamped/snapped, non-finite input falls back to
+   * the default.
+   */
+  outlineWidth: number;
   /** hex colour of the outline (white default in the UI) */
   outlineColour: string;
-  /** adds a second 1-cell dilate in a darker tone outside the outline */
+  /**
+   * adds a second darker band outside the outline, outer radius
+   * round(outlineWidth * cellPx) + round(0.25 * cellPx) device pixels
+   */
   twoTone: boolean;
   /** tilt in degrees, applied after upscale on the destination canvas */
   rotationDeg: number;
@@ -50,7 +66,10 @@ export type StickerOpts = {
   background: { mode: "tint" | "piece-bg" | "solid"; colour?: string };
   /** drop shadow drawn from the rotated sticker's alpha; opacity 0..1 */
   shadow: { on: boolean; opacity: number };
-  /** fraction of the frame the rotated sticker's larger extent fills (~0.5–1) */
+  /**
+   * fraction of the frame the UNROTATED outlined sticker's larger extent
+   * fills (~0.5–1); tilt does not change the rendered size
+   */
   scale: number;
   /** horizontal nudge as percent of the frame; positive = right */
   nudgeX: number;
@@ -60,27 +79,35 @@ export type StickerOpts = {
   size: 400 | 1000 | 2000;
 };
 
-/** darken() amount for the optional second (two-tone) outline ring */
+/** darken() amount for the optional second (two-tone) outline band */
 export const TWO_TONE_DARKEN = 0.4;
 /** darken() amount for the shadow colour, per spec: darken(bgColour, 0.4) */
 const SHADOW_DARKEN = 0.4;
 
+/** outlineWidth validity: 0..1.5 cells in 0.25 steps, default 0.5 */
+export const OUTLINE_WIDTH_MIN = 0;
+export const OUTLINE_WIDTH_MAX = 1.5;
+export const OUTLINE_WIDTH_STEP = 0.25;
+export const OUTLINE_WIDTH_DEFAULT = 0.5;
+
 /**
- * Steps 1–3 of the pipeline, entirely in cell space:
- * crop -> keyOut(detected bg) -> dilate(s).
- * The result grid is larger than `sel` by (outlineWidth + twoTone?1:0) cells
- * per side whenever an outline is applied.
+ * Defensive normalisation of StickerOpts.outlineWidth: snap to the nearest
+ * 0.25-cell step, clamp to [0, 1.5]; non-finite input falls back to 0.5.
  */
-export function buildStickerGrid(grid: Grid, sel: CellRect, opts: StickerOpts): Grid {
+export function normaliseOutlineWidth(w: number): number {
+  if (!Number.isFinite(w)) return OUTLINE_WIDTH_DEFAULT;
+  const snapped = Math.round(w / OUTLINE_WIDTH_STEP) * OUTLINE_WIDTH_STEP;
+  return Math.min(OUTLINE_WIDTH_MAX, Math.max(OUTLINE_WIDTH_MIN, snapped));
+}
+
+/**
+ * Cell-space steps of the pipeline: crop -> keyOut(detected bg). The result
+ * is exactly sel.w x sel.h — the outline is no longer a cell-space dilate;
+ * it happens at raster level in renderStickerLayer (sub-cell widths).
+ */
+export function buildStickerGrid(grid: Grid, sel: CellRect): Grid {
   const bg = detectBackground(grid);
-  let g = keyOut(crop(grid, sel), bg);
-  if (opts.outlineWidth > 0) {
-    g = dilate(g, opts.outlineWidth, opts.outlineColour);
-    if (opts.twoTone) {
-      g = dilate(g, 1, darken(opts.outlineColour, TWO_TONE_DARKEN));
-    }
-  }
-  return g;
+  return keyOut(crop(grid, sel), bg);
 }
 
 /**
@@ -158,6 +185,247 @@ export function rotatePixelsNearest(
   return out;
 }
 
+/**
+ * Pure raster of a grid at integer cellPx: each cell becomes a cellPx x
+ * cellPx block of its exact colour (alpha 255), null cells stay fully
+ * transparent. No canvas involved, so it is exact by construction and
+ * node-testable — the sticker path's one cells -> device pixels step.
+ */
+function rasteriseGridPixels(g: Grid, cellPx: number): Uint8ClampedArray<ArrayBuffer> {
+  const w = g.w * cellPx;
+  const out = new Uint8ClampedArray(w * g.h * cellPx * 4);
+  for (let cy = 0; cy < g.h; cy++) {
+    for (let cx = 0; cx < g.w; cx++) {
+      const c = g.cells[cy][cx];
+      if (c === null) continue;
+      const { r, g: gr, b } = hexToRgb(c);
+      for (let y = cy * cellPx; y < (cy + 1) * cellPx; y++) {
+        let i = (y * w + cx * cellPx) * 4;
+        for (let x = 0; x < cellPx; x++) {
+          out[i] = r;
+          out[i + 1] = gr;
+          out[i + 2] = b;
+          out[i + 3] = 255;
+          i += 4;
+        }
+      }
+    }
+  }
+  return out;
+}
+
+/**
+ * Binary dilation of a w x h occupancy mask with a square (Chebyshev)
+ * kernel of radius r, realised as a separable two-pass: 1-D horizontal
+ * dilation via left/right distance sweeps, then the same vertically over
+ * the horizontal result. O(w*h) regardless of r. Output is binary — no
+ * partial coverage exists, so no antialiasing can exist.
+ */
+function dilateMask(mask: Uint8Array, w: number, h: number, r: number): Uint8Array {
+  const far = w + h;
+  const tmp = new Uint8Array(w * h);
+  for (let y = 0; y < h; y++) {
+    const row = y * w;
+    let dist = far;
+    for (let x = 0; x < w; x++) {
+      dist = mask[row + x] ? 0 : dist + 1;
+      if (dist <= r) tmp[row + x] = 1;
+    }
+    dist = far;
+    for (let x = w - 1; x >= 0; x--) {
+      dist = mask[row + x] ? 0 : dist + 1;
+      if (dist <= r) tmp[row + x] = 1;
+    }
+  }
+  const out = new Uint8Array(w * h);
+  for (let x = 0; x < w; x++) {
+    let dist = far;
+    for (let y = 0; y < h; y++) {
+      const i = y * w + x;
+      dist = tmp[i] ? 0 : dist + 1;
+      if (dist <= r) out[i] = 1;
+    }
+    dist = far;
+    for (let y = h - 1; y >= 0; y--) {
+      const i = y * w + x;
+      dist = tmp[i] ? 0 : dist + 1;
+      if (dist <= r) out[i] = 1;
+    }
+  }
+  return out;
+}
+
+/**
+ * Raster-level sticker outline. Pads the source RGBA buffer by
+ * (outlinePx + bandPx) on each side so nothing can clip, then draws:
+ *
+ *   - outlineColour under every pixel within Chebyshev distance outlinePx
+ *     of the binary alpha mask (alpha > 0),
+ *   - optionally bandColour (two-tone) in the ring between outlinePx and
+ *     outlinePx + bandPx,
+ *   - the source pixels themselves, untouched, on top.
+ *
+ * Everything is decided per-pixel from binary masks: output alpha is 0 or
+ * 255 only, zero blur, zero antialiasing by construction. Pure function.
+ */
+export function outlinePixels(
+  src: Uint8ClampedArray,
+  srcW: number,
+  srcH: number,
+  outlinePx: number,
+  outlineColour: string,
+  bandPx = 0,
+  bandColour?: string,
+): { data: Uint8ClampedArray<ArrayBuffer>; w: number; h: number } {
+  if (src.length !== srcW * srcH * 4) {
+    throw new GridValidationError(
+      `outlinePixels: src length ${src.length} does not match ${srcW}x${srcH} RGBA`,
+    );
+  }
+  if (!Number.isInteger(outlinePx) || outlinePx < 0 || !Number.isInteger(bandPx) || bandPx < 0) {
+    throw new GridValidationError(
+      `outlinePixels: radii must be non-negative integers, got ${outlinePx}/${bandPx}`,
+    );
+  }
+  const band = bandColour !== undefined ? bandPx : 0;
+  const pad = outlinePx + band;
+  const w = srcW + 2 * pad;
+  const h = srcH + 2 * pad;
+  const out = new Uint8ClampedArray(w * h * 4);
+  if (pad === 0) {
+    out.set(src);
+    return { data: out, w, h };
+  }
+
+  // Binary occupancy of the padded source (alpha > 0 — the raster is
+  // hard-edged, alpha is only ever 0 or 255).
+  const occ = new Uint8Array(w * h);
+  for (let y = 0; y < srcH; y++) {
+    for (let x = 0; x < srcW; x++) {
+      if (src[(y * srcW + x) * 4 + 3] !== 0) occ[(y + pad) * w + (x + pad)] = 1;
+    }
+  }
+  const inner = dilateMask(occ, w, h, outlinePx);
+  const outer = band > 0 ? dilateMask(occ, w, h, outlinePx + band) : null;
+  const oc = hexToRgb(outlineColour);
+  const bc = bandColour !== undefined ? hexToRgb(bandColour) : oc;
+
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const i = y * w + x;
+      const di = i * 4;
+      const sx = x - pad;
+      const sy = y - pad;
+      if (sx >= 0 && sy >= 0 && sx < srcW && sy < srcH) {
+        const si = (sy * srcW + sx) * 4;
+        if (src[si + 3] !== 0) {
+          out[di] = src[si];
+          out[di + 1] = src[si + 1];
+          out[di + 2] = src[si + 2];
+          out[di + 3] = src[si + 3];
+          continue;
+        }
+      }
+      if (inner[i]) {
+        out[di] = oc.r;
+        out[di + 1] = oc.g;
+        out[di + 2] = oc.b;
+        out[di + 3] = 255;
+      } else if (outer !== null && outer[i]) {
+        out[di] = bc.r;
+        out[di + 1] = bc.g;
+        out[di + 2] = bc.b;
+        out[di + 3] = 255;
+      }
+    }
+  }
+  return { data: out, w, h };
+}
+
+/**
+ * The pure part of the compose: keyed grid -> cellPx (from the UNROTATED
+ * outlined dimensions, so tilt never changes size) -> raster -> raster-level
+ * outline (+ optional two-tone band) -> nearest-neighbour rotation into a
+ * targetPx x targetPx transparent layer, centred + nudged.
+ *
+ * Returns the rotated layer's RGBA plus the resolved metrics so callers
+ * (and tests) can reason about exact pixel geometry.
+ */
+export function renderStickerLayer(
+  grid: Grid,
+  sel: CellRect,
+  opts: StickerOpts,
+  targetPx: number,
+): {
+  data: Uint8ClampedArray<ArrayBuffer>;
+  cellPx: number;
+  outlinePx: number;
+  bandPx: number;
+  outW: number;
+  outH: number;
+} {
+  if (!Number.isInteger(targetPx) || targetPx < 1) {
+    throw new GridValidationError(
+      `renderStickerLayer: targetPx must be a positive integer, got ${targetPx}`,
+    );
+  }
+  const sticker = buildStickerGrid(grid, sel);
+  const ow = normaliseOutlineWidth(opts.outlineWidth);
+  const twoTone = opts.twoTone && ow > 0;
+
+  // cellPx from the UNROTATED outlined extent: largest integer cell size
+  // whose outlined sticker (content + outline padding) fits scale*targetPx.
+  // Deliberately NOT the rotated bounding box — tilt must not change size.
+  const scale = Math.max(0.05, Math.min(1, opts.scale));
+  const budget = scale * targetPx;
+  const maxCells = Math.max(sticker.w, sticker.h);
+  const dimAt = (c: number) =>
+    maxCells * c + 2 * (Math.round(ow * c) + (twoTone ? Math.round(0.25 * c) : 0));
+  let cellPx = Math.max(
+    1,
+    Math.floor(budget / (maxCells + 2 * (ow + (twoTone ? 0.25 : 0)))),
+  );
+  while (cellPx > 1 && dimAt(cellPx) > budget) cellPx--;
+
+  const outlinePx = ow > 0 ? Math.round(ow * cellPx) : 0;
+  const bandPx = twoTone ? Math.round(0.25 * cellPx) : 0;
+
+  // Rasterise upscaled FIRST, then outline at raster level, then rotate.
+  const rasterW = sticker.w * cellPx;
+  const rasterH = sticker.h * cellPx;
+  const raster = rasteriseGridPixels(sticker, cellPx);
+  const outlined =
+    outlinePx > 0 || bandPx > 0
+      ? outlinePixels(
+          raster,
+          rasterW,
+          rasterH,
+          outlinePx,
+          opts.outlineColour,
+          bandPx,
+          twoTone ? darken(opts.outlineColour, TWO_TONE_DARKEN) : undefined,
+        )
+      : { data: raster, w: rasterW, h: rasterH };
+
+  // Rotate manually with nearest-neighbour inverse mapping, centred + nudged.
+  // The layer is the full frame, so the rotated bounding box is never clipped
+  // by the layer itself; at extreme tilt+scale corners crop at the frame edge.
+  const rad = (opts.rotationDeg * Math.PI) / 180;
+  const cx = targetPx / 2 + (opts.nudgeX / 100) * targetPx;
+  const cy = targetPx / 2 + (opts.nudgeY / 100) * targetPx;
+  const data = rotatePixelsNearest(
+    outlined.data,
+    outlined.w,
+    outlined.h,
+    rad,
+    targetPx,
+    targetPx,
+    cx,
+    cy,
+  );
+  return { data, cellPx, outlinePx, bandPx, outW: outlined.w, outH: outlined.h };
+}
+
 function withAlpha(hex: string, alpha: number): string {
   const { r, g, b } = hexToRgb(hex);
   const a = Math.max(0, Math.min(1, alpha));
@@ -177,30 +445,8 @@ export function composeStickerCanvas(
   if (typeof document === "undefined") {
     throw new GridValidationError("composeStickerCanvas requires a browser environment");
   }
-  if (!Number.isInteger(targetPx) || targetPx < 1) {
-    throw new GridValidationError(
-      `composeStickerCanvas: targetPx must be a positive integer, got ${targetPx}`,
-    );
-  }
-
-  // Cell-space steps (crop -> keyOut -> dilates). Dilate expanded the grid,
-  // so sticker.w/h — not sel.w/h — drive all pixel maths from here on.
-  const sticker = buildStickerGrid(grid, sel, opts);
-
-  // Fit the ROTATED bounding box at `scale` of the frame, then rasterise at
-  // an integer cell size (the one and only cells -> device pixels step).
-  const rad = (opts.rotationDeg * Math.PI) / 180;
-  const cos = Math.abs(Math.cos(rad));
-  const sin = Math.abs(Math.sin(rad));
-  const rotW = sticker.w * cos + sticker.h * sin;
-  const rotH = sticker.w * sin + sticker.h * cos;
-  const scale = Math.max(0.05, Math.min(1, opts.scale));
-  const cellPx = Math.max(1, Math.floor((scale * targetPx) / Math.max(rotW, rotH)));
-
-  // Rasterise upscaled FIRST, smoothing off (rotation must come after).
-  const offscreen = rasteriseToCanvas(sticker, cellPx);
-  const offW = sticker.w * cellPx;
-  const offH = sticker.h * cellPx;
+  // Pure pipeline: crop/keyOut -> raster -> raster outline -> NN rotation.
+  const { data } = renderStickerLayer(grid, sel, opts, targetPx);
 
   const canvas = document.createElement("canvas");
   canvas.width = targetPx;
@@ -215,18 +461,6 @@ export function composeStickerCanvas(
   ctx.fillStyle = bgColour;
   ctx.fillRect(0, 0, targetPx, targetPx);
 
-  // Rotate manually with nearest-neighbour inverse mapping, centred + nudged.
-  // ctx.rotate()+drawImage would antialias the rotated edge geometry (verified
-  // in Chromium) even with imageSmoothingEnabled=false, bleeding blend colours
-  // along outline edges — NN copying makes blends impossible by construction.
-  const cx = targetPx / 2 + (opts.nudgeX / 100) * targetPx;
-  const cy = targetPx / 2 + (opts.nudgeY / 100) * targetPx;
-
-  const offCtx = offscreen.getContext("2d") as CanvasRenderingContext2D | null;
-  if (!offCtx) throw new GridValidationError("composeStickerCanvas: no offscreen 2d context");
-  const srcData = offCtx.getImageData(0, 0, offW, offH).data;
-  const rotated = rotatePixelsNearest(srcData, offW, offH, rad, targetPx, targetPx, cx, cy);
-
   // Stage the rotated sticker on its own transparent layer so the shadow can
   // be derived from its alpha and so drawing over the background is a pure
   // axis-aligned integer drawImage (which adds no edge antialiasing).
@@ -235,7 +469,8 @@ export function composeStickerCanvas(
   layer.height = targetPx;
   const layerCtx = layer.getContext("2d");
   if (!layerCtx) throw new GridValidationError("composeStickerCanvas: no layer 2d context");
-  layerCtx.putImageData(new ImageData(rotated, targetPx, targetPx), 0, 0);
+  layerCtx.imageSmoothingEnabled = false;
+  layerCtx.putImageData(new ImageData(data, targetPx, targetPx), 0, 0);
 
   if (opts.shadow.on && opts.shadow.opacity > 0) {
     // Shadow pass: the browser derives the (intentionally soft) shadow from
