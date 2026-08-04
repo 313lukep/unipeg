@@ -14,9 +14,8 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import Masthead from "@/components/Masthead";
+import Masthead, { BrandBar } from "@/components/Masthead";
 import RegistryLine from "@/components/RegistryLine";
-import ThemeToggle from "@/components/ThemeToggle";
 import LookupBar from "@/components/LookupBar";
 import Stage from "@/components/Stage";
 import RecentLookups, { type RecentEntry } from "@/components/RecentLookups";
@@ -279,13 +278,11 @@ export default function Home() {
 
   return (
     <main className="mx-auto flex w-full max-w-[960px] flex-1 flex-col px-4 pb-16">
-      {/* masthead row: coronation slot + theme toggle */}
-      <div className="flex items-start justify-between gap-2">
-        <Masthead pieceId={pieceId} />
-        <div className="pt-4">
-          <ThemeToggle />
-        </div>
-      </div>
+      {/* pinned brand bar: big wordmark, credit, theme toggle */}
+      <BrandBar />
+
+      {/* piece-number slot */}
+      <Masthead pieceId={pieceId} />
 
       <RegistryLine
         piece={piece}
