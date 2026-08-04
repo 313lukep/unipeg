@@ -305,7 +305,6 @@ export default function Home() {
             selection={selection}
             onSelectionChange={setSelection}
             wipeKey={wipeKey}
-            cropGhost={cropGhost}
           />
 
           {phase === "error" && errorText !== null && (

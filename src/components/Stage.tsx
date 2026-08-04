@@ -26,7 +26,6 @@ import { useEffect, useRef, useState } from "react";
 import type { CellRect, Grid } from "@/lib/grid";
 import { rasterise } from "@/lib/grid";
 import CropBox from "@/components/CropBox";
-import MicroLabel from "@/components/ui/MicroLabel";
 
 export type StagePhase = "idle" | "loading" | "loaded" | "error";
 
@@ -40,8 +39,6 @@ export type StageProps = {
   onSelectionChange: (r: CellRect) => void;
   /** bump to replay the column-wipe theatre (one per successful load) */
   wipeKey: number;
-  /** X-crop ghost visibility in fullbody mode (idle always shows it). */
-  cropGhost?: boolean;
 };
 
 
@@ -65,7 +62,6 @@ export default function Stage({
   selection,
   onSelectionChange,
   wipeKey,
-  cropGhost = true,
 }: StageProps) {
   const cols = grid?.w ?? 24;
   const rows = grid?.h ?? 24;
@@ -118,12 +114,6 @@ export default function Stage({
 
   const counterRow = Math.max(0, Math.min(24, loadingRow));
   const counterText = `READING CHAIN — ROW ${String(counterRow).padStart(2, "0")}/24`;
-
-  const showCircle =
-    phase === "idle" || (loaded && mode === "fullbody" && cropGhost);
-  // Inscribed circle as percentages — equal device size on both axes.
-  const circleW = (Math.min(cols, rows) / cols) * 100;
-  const circleH = (Math.min(cols, rows) / rows) * 100;
 
   const pct = (n: number, total: number) => `${(n / total) * 100}%`;
 
@@ -223,23 +213,6 @@ export default function Stage({
                 Pick your peg
               </p>
             </div>
-          )}
-
-          {/* dashed X-crop circle: what X actually keeps */}
-          {showCircle && (
-            <>
-              <span
-                aria-hidden="true"
-                className="pointer-events-none absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 rounded-full border border-dashed border-mute"
-                style={{ width: `${circleW}%`, height: `${circleH}%` }}
-              />
-              <span
-                className="pointer-events-none absolute left-1/2 -translate-x-1/2 -translate-y-1/2 bg-card px-1"
-                style={{ top: `${(100 - circleH) / 2}%` }}
-              >
-                <MicroLabel tone="mute">X crop</MicroLabel>
-              </span>
-            </>
           )}
 
           {/* sticker mode: the crop selection, snapped to whole cells */}
