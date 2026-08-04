@@ -387,7 +387,7 @@ export function FullBodyControls() {
       aria-label="Full-Body Fit controls"
       className="flex w-full flex-col gap-[8px]"
     >
-      <div className="grid grid-cols-1 items-center gap-x-[24px] gap-y-[6px] lg:grid-cols-3">
+      <div className="grid grid-cols-1 items-center gap-x-[24px] gap-y-[6px] lg:grid-cols-2">
         {/* breathing room (live) */}
         <div className="u-cslider-row">
           <CellSlider

@@ -204,8 +204,25 @@ body {
 
 @media (min-width: 1024px) {
   :root {
+    /* Densify the spacing lattice: utilities inline calc(--cell/4), so a
+       24px->16px cell halves-ish every gap/padding on desktop (pills stop
+       wrapping inside the multi-column control grid). Control chrome keeps
+       its own explicit height below. */
+    --cell: 16px;
     --control-h: 44px;
-    --stage-side: clamp(260px, calc(100dvh - 560px), 520px);
+    --stage-side: clamp(260px, calc(100dvh - 565px), 520px);
+  }
+  /* Dense scope for the below-stage control block: 36px control chrome
+     (mouse-first; mobile keeps 44px touch targets). The two-class
+     selectors out-specify the single-class utility min-heights. */
+  .u-dense {
+    --control-h: 36px;
+  }
+  .u-dense .u-focus-square {
+    min-height: 36px;
+  }
+  .u-dense .u-cslider-row > div > div:last-child {
+    min-height: 36px;
   }
   /* Full-body preview cards: two stacked squares + labels/padding/gap
      sum to --stage-side. card = canvas + 16px padding; per-card
@@ -217,7 +234,7 @@ body {
   /* Sticker preview: header row (~44) + gap + padding leaves the
      canvas square matching the stage height. */
   .u-sticker-preview {
-    width: calc(var(--stage-side) - 52px);
+    width: calc(var(--stage-side) - 50px);
     max-width: 100%;
   }
 }

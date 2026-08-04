@@ -360,7 +360,7 @@ export default function Home() {
               {/* MAIN ROW right: the active tool's previews. On mobile this
                   block is sticky under the pinned brand bar (z below its
                   z-50) so the preview stays visible while controls scroll. */}
-              <div className="min-w-0 max-lg:sticky max-lg:top-[60px] max-lg:z-40 max-lg:border-b max-lg:border-line max-lg:bg-paper max-lg:pb-[8px] lg:col-start-2 lg:row-start-1">
+              <div className="min-w-0 max-lg:sticky max-lg:top-[88px] max-lg:z-40 max-lg:border-b max-lg:border-line max-lg:bg-paper max-lg:pb-[8px] lg:col-start-2 lg:row-start-1">
                 <div className={tool === "fullbody" ? "" : "hidden"}>
                   <FullBodyPreview />
                 </div>
@@ -369,8 +369,9 @@ export default function Home() {
                 </div>
               </div>
 
-              {/* BELOW: tool tabs + ALL controls, compact multi-column */}
-              <div className="flex min-w-0 flex-col gap-[8px] lg:col-span-2 lg:row-start-2">
+              {/* BELOW: tool tabs + ALL controls, compact multi-column.
+                  u-dense = 36px control chrome on desktop only. */}
+              <div className="u-dense flex min-w-0 flex-col gap-[8px] lg:col-span-2 lg:row-start-2">
                 <div className="flex flex-wrap items-center gap-2">
                   <MicroLabel tone="pink">Tool</MicroLabel>
                   <Pill

@@ -458,7 +458,7 @@ export function StickerControls() {
       className="flex w-full flex-col gap-[8px]"
       onPointerDownCapture={s.beginDrag}
     >
-      <div className="grid grid-cols-1 items-center gap-x-[24px] gap-y-[6px] lg:grid-cols-3">
+      <div className="grid grid-cols-1 items-center gap-x-[24px] gap-y-[6px] lg:grid-cols-2">
         {/* outline thickness: 0..1.5 cells in 1/4 steps, default 1/2 */}
         <div className="u-cslider-row">
           <CellSlider
