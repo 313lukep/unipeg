@@ -1,47 +1,66 @@
 "use client";
 
 /**
- * StickerPanel — the Head Sticker tool rail.
+ * Head Sticker tool, split into placeable parts (owner's layout):
  *
- * Controls are named for what they do to the picture: Outline, Tilt,
- * Background, Shadow, Size in frame, Nudge. The panel owns a live sticker
- * preview canvas: low-res while any control (or the crop box) is being
- * dragged, full-res ~80ms after release. Heavy recomposition is memoised by
- * its actual inputs — unrelated state (circle mask, export size, success
- * labels) never re-rasterises the sticker.
+ *   <StickerProvider>       — owns ALL tool state + the compose pipeline
+ *     <StickerPreview />        — live preview canvas + its X CROP toggle
+ *     <StickerControls />       — compact multi-column control rows + export
+ *     <StickerStageDragLayer>   — wraps the page's Stage so dragging the
+ *                                 cell-snapped CropBox there gets the same
+ *                                 low-res-while-dragging treatment the old
+ *                                 in-panel crop stage had
  *
- * Selection is owned by the parent (seeded once per piece from
- * detectHeadSeed); this panel only consumes and forwards changes. It also
- * renders a small crop stage of the source grid with the CropBox overlay so
- * the crop is adjustable right next to its consequences.
+ * Behaviour is unchanged: low-res preview while any pointer drags, full-res
+ * ~80ms after release/last change; heavy recomposition memoised by its
+ * actual inputs (circle mask, export size and success labels never
+ * re-rasterise); exports/copy identical. Selection is owned by the page and
+ * edited on the main Stage's CropBox; this panel only consumes it.
+ *
+ * Outline colour is the owner's two-chip rule: WHITE (default) / BLACK.
+ * TWO-TONE's band is automatically the opposite colour — no colour choice.
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import type { CellRect, Grid } from "@/lib/grid";
-import { rasterise } from "@/lib/grid";
 import {
   composeStickerCanvas,
   exportSticker,
   type StickerOpts,
 } from "@/lib/exporter/sticker";
-import CropBox from "@/components/CropBox";
 import CellSlider from "@/components/ui/CellSlider";
 import MicroLabel from "@/components/ui/MicroLabel";
 import Pill from "@/components/ui/Pill";
 
-export type StickerPanelProps = {
+export type StickerProviderProps = {
   grid: Grid;
   pieceId: number | null;
   selection: CellRect;
-  onSelectionChange: (r: CellRect) => void;
+  children: ReactNode;
 };
 
 /** Owner amendment: exactly three background options. */
 type BgMode = "black" | "white" | "piece-bg";
+/** Owner rule: outlines are white or black, nothing else. */
+type OutlineColour = "#ffffff" | "#000000";
 type ExportSize = 400 | 1000 | 2000;
 
 const LOW_RES_PX = 240;
 const DEBOUNCE_MS = 80;
+
+const OUTLINE_PILLS: { colour: OutlineColour; label: string }[] = [
+  { colour: "#ffffff", label: "WHITE" },
+  { colour: "#000000", label: "BLACK" },
+];
 
 /**
  * Format the outline width (fractional cells, quarter-cell steps) in the
@@ -59,7 +78,10 @@ function formatOutlineCells(v: number): string {
 }
 
 /** Track an element's content width (0 until measured; SSR-safe). */
-function useElementWidth<T extends HTMLElement>(): [React.RefObject<T | null>, number] {
+function useElementWidth<T extends HTMLElement>(): [
+  React.RefObject<T | null>,
+  number,
+] {
   const ref = useRef<T | null>(null);
   const [width, setWidth] = useState(0);
   useEffect(() => {
@@ -75,50 +97,16 @@ function useElementWidth<T extends HTMLElement>(): [React.RefObject<T | null>, n
   return [ref, width];
 }
 
-function Swatch({
-  colour,
-  selected,
-  onSelect,
-  label,
-}: {
-  colour: string;
-  selected: boolean;
-  onSelect: () => void;
-  label: string;
-}) {
-  return (
-    <button
-      type="button"
-      aria-label={label}
-      aria-pressed={selected}
-      onClick={onSelect}
-      className="u-focus-square relative flex min-h-[44px] min-w-[44px] items-center justify-center"
-    >
-      {/* the swatch is a literal pixel: square, no radius */}
-      <span
-        aria-hidden="true"
-        className="block h-4 w-4"
-        style={{
-          background: colour,
-          boxShadow: selected
-            ? "0 0 0 2px var(--paper), 0 0 0 4px var(--accent)"
-            : "0 0 0 1px var(--line)",
-        }}
-      />
-    </button>
-  );
-}
-
-export default function StickerPanel({
+/** All tool state + compose pipeline, shared by Preview and Controls. */
+function useStickerEngine({
   grid,
   pieceId,
   selection,
-  onSelectionChange,
-}: StickerPanelProps) {
+}: Omit<StickerProviderProps, "children">) {
   // ---- controls state (defaults per spec) --------------------------------
   // Outline is fractional cells (0..1.5 in 1/4-cell steps); owner default 1/2.
   const [outlineWidth, setOutlineWidth] = useState(0.5);
-  const [outlineColour, setOutlineColour] = useState("#ffffff");
+  const [outlineColour, setOutlineColour] = useState<OutlineColour>("#ffffff");
   const [twoTone, setTwoTone] = useState(false);
   const [tilt, setTilt] = useState(-22);
   const [bgMode, setBgMode] = useState<BgMode>("black");
@@ -144,6 +132,7 @@ export default function StickerPanel({
 
   // ---- drag detection: low-res preview while any pointer is down --------
   const [dragging, setDragging] = useState(false);
+  const beginDrag = useCallback(() => setDragging(true), []);
   useEffect(() => {
     if (!dragging) return;
     const up = () => setDragging(false);
@@ -156,34 +145,20 @@ export default function StickerPanel({
   }, [dragging]);
 
   // ---- measurements ------------------------------------------------------
-  const [stageWrapRef, stageWidth] = useElementWidth<HTMLDivElement>();
   const [previewWrapRef, previewWidth] = useElementWidth<HTMLDivElement>();
   // Lazy init, SSR-guarded; dpr only ever feeds effect-driven canvas sizing,
   // so a server/client difference cannot cause a markup mismatch.
   const [dpr] = useState(() =>
-    typeof window === "undefined" ? 1 : Math.max(1, Math.min(2, window.devicePixelRatio || 1)),
+    typeof window === "undefined"
+      ? 1
+      : Math.max(1, Math.min(2, window.devicePixelRatio || 1)),
   );
 
-  const cellPx = stageWidth > 0 ? Math.floor(stageWidth / grid.w) : 0;
   const fullPreviewPx =
-    previewWidth > 0 ? Math.max(320, Math.min(960, Math.round(previewWidth * dpr))) : 480;
+    previewWidth > 0
+      ? Math.max(320, Math.min(960, Math.round(previewWidth * dpr)))
+      : 480;
   const previewPx = dragging ? LOW_RES_PX : fullPreviewPx;
-
-  // ---- crop stage: source grid + CropBox overlay ------------------------
-  const stageCanvasRef = useRef<HTMLCanvasElement | null>(null);
-  useEffect(() => {
-    const cv = stageCanvasRef.current;
-    if (!cv || cellPx <= 0) return;
-    const dev = Math.max(1, Math.round(cellPx * dpr));
-    cv.width = grid.w * dev;
-    cv.height = grid.h * dev;
-    const ctx = cv.getContext("2d");
-    if (!ctx) return;
-    // canvas just resized — context reset — smoothing off again
-    ctx.imageSmoothingEnabled = false;
-    ctx.clearRect(0, 0, cv.width, cv.height);
-    rasterise(grid, dev, ctx);
-  }, [grid, cellPx, dpr]);
 
   // ---- sticker options --------------------------------------------------
   // exportSize is deliberately NOT part of this memo: it only matters at
@@ -228,7 +203,12 @@ export default function StickerPanel({
   useEffect(() => {
     const t = setTimeout(() => {
       try {
-        composedRef.current = composeStickerCanvas(grid, selection, visualOpts, previewPx);
+        composedRef.current = composeStickerCanvas(
+          grid,
+          selection,
+          visualOpts,
+          previewPx,
+        );
         setComposeError(null);
       } catch (err) {
         composedRef.current = null;
@@ -281,7 +261,10 @@ export default function StickerPanel({
     if (busy) return;
     setBusy(true);
     try {
-      const blob = await exportSticker(grid, selection, { ...visualOpts, size: exportSize });
+      const blob = await exportSticker(grid, selection, {
+        ...visualOpts,
+        size: exportSize,
+      });
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
@@ -307,7 +290,10 @@ export default function StickerPanel({
       // Pass the promise straight in — awaiting the export first would let
       // Safari's user-gesture window expire before clipboard.write runs.
       const item = new ClipboardItem({
-        "image/png": exportSticker(grid, selection, { ...visualOpts, size: exportSize }),
+        "image/png": exportSticker(grid, selection, {
+          ...visualOpts,
+          size: exportSize,
+        }),
       });
       await navigator.clipboard.write([item]);
       flash(setCopyLabel, "COPIED PNG");
@@ -318,253 +304,314 @@ export default function StickerPanel({
     }
   }, [busy, grid, selection, visualOpts, exportSize, flash]);
 
-  // outline colour options: white first, then the piece's own palette
-  const outlineColours = useMemo(() => {
-    const seen = new Set<string>(["#ffffff"]);
-    const out = ["#ffffff"];
-    for (const c of grid.palette) {
-      if (!seen.has(c)) {
-        seen.add(c);
-        out.push(c);
-      }
-    }
-    return out.slice(0, 8);
-  }, [grid.palette]);
+  // Callback refs (not RefObjects) so the engine object stays ref-free —
+  // consumers attach elements without touching ref values during render.
+  const attachPreviewWrap = useCallback(
+    (el: HTMLDivElement | null) => {
+      previewWrapRef.current = el;
+    },
+    [previewWrapRef],
+  );
+  const attachPreviewCanvas = useCallback((el: HTMLCanvasElement | null) => {
+    previewCanvasRef.current = el;
+  }, []);
 
+  return {
+    selection,
+    outlineWidth,
+    setOutlineWidth,
+    outlineColour,
+    setOutlineColour,
+    twoTone,
+    setTwoTone,
+    tilt,
+    setTilt,
+    bgMode,
+    setBgMode,
+    shadowOn,
+    setShadowOn,
+    shadowStrength,
+    setShadowStrength,
+    sizeInFrame,
+    setSizeInFrame,
+    nudgeX,
+    setNudgeX,
+    nudgeY,
+    setNudgeY,
+    circleMask,
+    setCircleMask,
+    exportSize,
+    setExportSize,
+    savedLabel,
+    copyLabel,
+    busy,
+    beginDrag,
+    attachPreviewWrap,
+    attachPreviewCanvas,
+    composeError,
+    filename,
+    handleDownload,
+    handleCopy,
+  };
+}
 
+type StickerEngine = ReturnType<typeof useStickerEngine>;
+
+const Ctx = createContext<StickerEngine | null>(null);
+
+function useSticker(): StickerEngine {
+  const ctx = useContext(Ctx);
+  if (ctx === null) {
+    throw new Error("Sticker parts must render inside <StickerProvider>");
+  }
+  return ctx;
+}
+
+export function StickerProvider({ children, ...props }: StickerProviderProps) {
+  const engine = useStickerEngine(props);
+  return <Ctx.Provider value={engine}>{children}</Ctx.Provider>;
+}
+
+/** Wrap the page's Stage with this so dragging its CropBox switches the
+ *  sticker preview to the low-res pass (same as any in-panel drag). */
+export function StickerStageDragLayer({
+  active,
+  children,
+}: {
+  active: boolean;
+  children: ReactNode;
+}) {
+  const s = useSticker();
   return (
-    <div
-      className="flex w-full flex-col gap-4"
-      onPointerDownCapture={() => setDragging(true)}
+    <div onPointerDownCapture={active ? s.beginDrag : undefined}>{children}</div>
+  );
+}
+
+/** Live sticker preview with its X CROP toggle and the crop readout. */
+export function StickerPreview() {
+  const s = useSticker();
+  return (
+    <section
+      aria-label="Sticker preview"
+      className="flex w-full flex-col gap-[6px]"
     >
-      {/* ---- crop stage ---------------------------------------------- */}
-      <section aria-label="Crop">
-        <div className="mb-2 flex items-baseline justify-between">
-          <MicroLabel tone="mute">CROP</MicroLabel>
-          <span className="font-mono text-[12px] text-mute">
-            {selection.w}×{selection.h} @ {selection.x},{selection.y}
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="flex min-w-0 flex-col gap-1">
+          <MicroLabel tone="mute">Sticker preview</MicroLabel>
+          <span className="font-mono text-[11px] leading-none text-mute">
+            CROP {s.selection.w}×{s.selection.h} @ {s.selection.x},
+            {s.selection.y}
           </span>
         </div>
-        <div ref={stageWrapRef} className="w-full">
-          {cellPx > 0 && (
-            <div
-              className="relative bg-card"
-              style={{ width: grid.w * cellPx, height: grid.h * cellPx }}
+        <Pill
+          variant={s.circleMask ? "active" : "card"}
+          aria-pressed={s.circleMask}
+          onClick={() => s.setCircleMask(!s.circleMask)}
+        >
+          X CROP {s.circleMask ? "ON" : "OFF"}
+        </Pill>
+      </div>
+      <div
+        ref={s.attachPreviewWrap}
+        className="u-sticker-preview w-full bg-card p-[8px]"
+        style={{ borderRadius: 12 }}
+      >
+        {s.composeError !== null ? (
+          <p className="border-2 border-ink p-3 font-mono text-[12px] text-ink">
+            {s.composeError}
+          </p>
+        ) : (
+          <canvas
+            ref={s.attachPreviewCanvas}
+            aria-label="Live sticker preview"
+            className="block h-auto w-full"
+            style={{ imageRendering: "pixelated" }}
+          />
+        )}
+      </div>
+    </section>
+  );
+}
+
+/** Compact multi-column controls + condensed export row. */
+export function StickerControls() {
+  const s = useSticker();
+  return (
+    <section
+      aria-label="Head Sticker controls"
+      className="flex w-full flex-col gap-[8px]"
+      onPointerDownCapture={s.beginDrag}
+    >
+      <div className="grid grid-cols-1 items-center gap-x-[24px] gap-y-[6px] lg:grid-cols-3">
+        {/* outline thickness: 0..1.5 cells in 1/4 steps, default 1/2 */}
+        <div className="u-cslider-row">
+          <CellSlider
+            label="Outline"
+            value={s.outlineWidth}
+            min={0}
+            max={1.5}
+            step={0.25}
+            onChange={(v) => s.setOutlineWidth(Math.round(v * 4) / 4)}
+            format={formatOutlineCells}
+          />
+        </div>
+
+        {/* outline colour: exactly two chips (owner rule) + TWO-TONE, whose
+            band is automatically the opposite colour */}
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-[13px] font-semibold text-ink">Outline</span>
+          {OUTLINE_PILLS.map(({ colour, label }) => (
+            <Pill
+              key={colour}
+              variant={s.outlineColour === colour ? "active" : "card"}
+              aria-pressed={s.outlineColour === colour}
+              onClick={() => s.setOutlineColour(colour)}
             >
-              <canvas
-                ref={stageCanvasRef}
-                aria-label="Source piece with crop selection"
-                className="block"
-                style={{
-                  width: grid.w * cellPx,
-                  height: grid.h * cellPx,
-                  imageRendering: "pixelated",
-                }}
-              />
-              <CropBox
-                rect={selection}
-                onChange={onSelectionChange}
-                cellPx={cellPx}
-                gridW={grid.w}
-                gridH={grid.h}
-                minSize={3}
-              />
-            </div>
-          )}
-        </div>
-      </section>
-
-      {/* ---- live preview --------------------------------------------- */}
-      <section aria-label="Sticker preview">
-        <div className="mb-2 flex items-center justify-between gap-2">
-          <MicroLabel tone="mute">STICKER PREVIEW</MicroLabel>
-          <Pill
-            variant={circleMask ? "active" : "card"}
-            aria-pressed={circleMask}
-            onClick={() => setCircleMask((v) => !v)}
-          >
-            X CROP {circleMask ? "ON" : "OFF"}
-          </Pill>
-        </div>
-        <div ref={previewWrapRef} className="w-full bg-card p-2" style={{ borderRadius: 12 }}>
-          {composeError !== null ? (
-            <p className="border-2 border-ink p-3 font-mono text-[12px] text-ink">
-              {composeError}
-            </p>
-          ) : (
-            <canvas
-              ref={previewCanvasRef}
-              aria-label="Live sticker preview"
-              className="block h-auto w-full"
-              style={{ imageRendering: "pixelated" }}
-            />
-          )}
-        </div>
-      </section>
-
-      {/* ---- Outline --------------------------------------------------- */}
-      <section aria-label="Outline" className="flex flex-col gap-2">
-        <CellSlider
-          label="Outline"
-          value={outlineWidth}
-          min={0}
-          max={1.5}
-          step={0.25}
-          onChange={(v) => setOutlineWidth(Math.round(v * 4) / 4)}
-          format={formatOutlineCells}
-        />
-        <div className="flex flex-wrap items-center gap-0">
-          {outlineColours.map((c) => (
-            <Swatch
-              key={c}
-              colour={c}
-              selected={outlineColour === c}
-              onSelect={() => setOutlineColour(c)}
-              label={`Outline colour ${c}`}
-            />
+              {label}
+            </Pill>
           ))}
           <Pill
-            variant={twoTone ? "active" : "card"}
-            aria-pressed={twoTone}
-            onClick={() => setTwoTone((v) => !v)}
-            className="ml-2"
+            variant={s.twoTone ? "active" : "card"}
+            aria-pressed={s.twoTone}
+            onClick={() => s.setTwoTone(!s.twoTone)}
           >
-            TWO-TONE {twoTone ? "ON" : "OFF"}
+            TWO-TONE {s.twoTone ? "ON" : "OFF"}
           </Pill>
         </div>
-      </section>
 
-      {/* ---- Tilt ------------------------------------------------------
-           Detents sit ON the 5-degree lattice (0 / -20) so no value is
-           magnet-trapped; the build-spec default -22 stays reachable as the
-           initial value (keyboard steps re-enter the native lattice). */}
-      <section aria-label="Tilt">
-        <CellSlider
-          label="Tilt"
-          value={tilt}
-          min={-45}
-          max={45}
-          step={5}
-          detents={[0, -20]}
-          onChange={setTilt}
-          format={(v) => `TILT ${v} DEG`}
-        />
-      </section>
+        {/* tilt — detents sit ON the 5-degree lattice (0 / -20) so no value
+            is magnet-trapped; the build-spec default -22 stays reachable as
+            the initial value (keyboard steps re-enter the native lattice). */}
+        <div className="u-cslider-row">
+          <CellSlider
+            label="Tilt"
+            value={s.tilt}
+            min={-45}
+            max={45}
+            step={5}
+            detents={[0, -20]}
+            onChange={s.setTilt}
+            format={(v) => `TILT ${v} DEG`}
+          />
+        </div>
 
-      {/* ---- Background ------------------------------------------------ */}
-      <section aria-label="Background" className="flex flex-col gap-2">
-        <span className="text-[13px] font-semibold text-ink">Background</span>
+        {/* background */}
         <div className="flex flex-wrap items-center gap-2">
+          <span className="text-[13px] font-semibold text-ink">Background</span>
           <Pill
-            variant={bgMode === "black" ? "active" : "card"}
-            aria-pressed={bgMode === "black"}
-            onClick={() => setBgMode("black")}
+            variant={s.bgMode === "black" ? "active" : "card"}
+            aria-pressed={s.bgMode === "black"}
+            onClick={() => s.setBgMode("black")}
           >
             BLACK
           </Pill>
           <Pill
-            variant={bgMode === "white" ? "active" : "card"}
-            aria-pressed={bgMode === "white"}
-            onClick={() => setBgMode("white")}
+            variant={s.bgMode === "white" ? "active" : "card"}
+            aria-pressed={s.bgMode === "white"}
+            onClick={() => s.setBgMode("white")}
           >
             WHITE
           </Pill>
           <Pill
-            variant={bgMode === "piece-bg" ? "active" : "card"}
-            aria-pressed={bgMode === "piece-bg"}
-            onClick={() => setBgMode("piece-bg")}
+            variant={s.bgMode === "piece-bg" ? "active" : "card"}
+            aria-pressed={s.bgMode === "piece-bg"}
+            onClick={() => s.setBgMode("piece-bg")}
           >
             PIECE BG
           </Pill>
         </div>
-      </section>
 
-      {/* ---- Shadow ---------------------------------------------------- */}
-      <section aria-label="Shadow" className="flex flex-col gap-2">
-        <div className="flex items-center justify-between gap-2">
-          <span className="text-[13px] font-semibold text-ink">Shadow</span>
+        {/* shadow: toggle + strength on one row */}
+        <div className="flex items-center gap-[8px]">
           <Pill
-            variant={shadowOn ? "active" : "card"}
-            aria-pressed={shadowOn}
-            onClick={() => setShadowOn((v) => !v)}
+            variant={s.shadowOn ? "active" : "card"}
+            aria-pressed={s.shadowOn}
+            onClick={() => s.setShadowOn(!s.shadowOn)}
+            className="shrink-0"
           >
-            SHADOW {shadowOn ? "ON" : "OFF"}
+            SHADOW {s.shadowOn ? "ON" : "OFF"}
           </Pill>
+          {s.shadowOn && (
+            <div className="u-cslider-row u-cslider-bare min-w-0 flex-1">
+              <CellSlider
+                label="Shadow strength"
+                value={s.shadowStrength}
+                min={0}
+                max={100}
+                step={5}
+                onChange={s.setShadowStrength}
+                format={(v) => `${v}%`}
+              />
+            </div>
+          )}
         </div>
-        {shadowOn && (
+
+        {/* size in frame — tilt-invariant by the exporter's construction */}
+        <div className="u-cslider-row">
           <CellSlider
-            label="Strength"
-            value={shadowStrength}
-            min={0}
+            label="Size in frame"
+            value={s.sizeInFrame}
+            min={50}
             max={100}
-            step={5}
-            onChange={setShadowStrength}
+            step={1}
+            detents={[78]}
+            onChange={s.setSizeInFrame}
             format={(v) => `${v}%`}
           />
-        )}
-      </section>
-
-      {/* ---- Size + nudge ---------------------------------------------- */}
-      <section aria-label="Placement" className="flex flex-col gap-2">
-        <CellSlider
-          label="Size in frame"
-          value={sizeInFrame}
-          min={50}
-          max={100}
-          step={1}
-          detents={[78]}
-          onChange={setSizeInFrame}
-          format={(v) => `${v}%`}
-        />
-        <CellSlider
-          label="Nudge X"
-          value={nudgeX}
-          min={-25}
-          max={25}
-          step={1}
-          detents={[0]}
-          onChange={setNudgeX}
-          format={(v) => `${v > 0 ? "+" : ""}${v}%`}
-        />
-        <CellSlider
-          label="Nudge Y"
-          value={nudgeY}
-          min={-25}
-          max={25}
-          step={1}
-          detents={[0]}
-          onChange={setNudgeY}
-          format={(v) => `${v > 0 ? "+" : ""}${v}%`}
-        />
-      </section>
-
-      {/* ---- Export ---------------------------------------------------- */}
-      <section aria-label="Export" className="flex flex-col gap-2">
-        <MicroLabel tone="pink">EXPORT</MicroLabel>
-        <div className="flex flex-wrap items-center gap-2">
-          {([400, 1000, 2000] as const).map((s) => (
-            <Pill
-              key={s}
-              variant={exportSize === s ? "active" : "card"}
-              aria-pressed={exportSize === s}
-              onClick={() => setExportSize(s)}
-            >
-              <span className="font-mono">{s}</span>
-            </Pill>
-          ))}
         </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <Pill variant="ink" onClick={handleDownload} disabled={busy}>
-            <span className="font-mono">
-              {savedLabel ?? `DOWNLOAD ${exportSize}×${exportSize} PNG`}
-            </span>
-          </Pill>
-          <Pill variant="card" onClick={handleCopy} disabled={busy}>
-            <span className="font-mono">{copyLabel ?? "COPY PNG"}</span>
-          </Pill>
+
+        {/* nudge X/Y side by side (mobile); own cells on desktop */}
+        <div className="grid grid-cols-2 gap-x-[12px] lg:contents">
+          <div className="u-cslider-row min-w-0">
+            <CellSlider
+              label="Nudge X"
+              value={s.nudgeX}
+              min={-25}
+              max={25}
+              step={1}
+              detents={[0]}
+              onChange={s.setNudgeX}
+              format={(v) => `${v > 0 ? "+" : ""}${v}%`}
+            />
+          </div>
+          <div className="u-cslider-row min-w-0">
+            <CellSlider
+              label="Nudge Y"
+              value={s.nudgeY}
+              min={-25}
+              max={25}
+              step={1}
+              detents={[0]}
+              onChange={s.setNudgeY}
+              format={(v) => `${v > 0 ? "+" : ""}${v}%`}
+            />
+          </div>
         </div>
-        <span className="font-mono text-[12px] text-mute">{filename}</span>
-      </section>
-    </div>
+      </div>
+
+      {/* condensed export row: size picker + download + copy + filename */}
+      <div className="flex flex-wrap items-center gap-x-[10px] gap-y-[6px]">
+        <MicroLabel tone="pink">Export</MicroLabel>
+        {([400, 1000, 2000] as const).map((sz) => (
+          <Pill
+            key={sz}
+            variant={s.exportSize === sz ? "active" : "card"}
+            aria-pressed={s.exportSize === sz}
+            onClick={() => s.setExportSize(sz)}
+          >
+            <span className="font-mono">{sz}</span>
+          </Pill>
+        ))}
+        <Pill variant="ink" onClick={s.handleDownload} disabled={s.busy}>
+          <span className="font-mono">
+            {s.savedLabel ?? `DOWNLOAD ${s.exportSize}×${s.exportSize} PNG`}
+          </span>
+        </Pill>
+        <Pill variant="card" onClick={s.handleCopy} disabled={s.busy}>
+          <span className="font-mono">{s.copyLabel ?? "COPY PNG"}</span>
+        </Pill>
+        <span className="font-mono text-[12px] text-mute">{s.filename}</span>
+      </div>
+    </section>
   );
 }

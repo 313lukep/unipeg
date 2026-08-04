@@ -192,3 +192,74 @@ body {
     transition: none !important;
   }
 }
+
+/* ------------------------------------------------------------------ */
+/* ADDITIVE — interaction rework (owner's desktop/mobile layout).      */
+/* Desktop (>=1024px): denser control chrome and a height-driven       */
+/* stage so brand bar -> download button fits 1280x900 with no         */
+/* vertical scroll. --stage-side is the square stage's edge; the       */
+/* preview column derives its card widths from the same variable so    */
+/* the preview stack matches the stage height.                         */
+/* ------------------------------------------------------------------ */
+
+@media (min-width: 1024px) {
+  :root {
+    --control-h: 44px;
+    --stage-side: clamp(260px, calc(100dvh - 560px), 520px);
+  }
+  /* Full-body preview cards: two stacked squares + labels/padding/gap
+     sum to --stage-side. card = canvas + 16px padding; per-card
+     overhead label 11 + gap 6 = 17, column gap 12. */
+  .u-fb-card {
+    width: calc((var(--stage-side) - 78px) / 2 + 16px);
+    max-width: 100%;
+  }
+  /* Sticker preview: header row (~44) + gap + padding leaves the
+     canvas square matching the stage height. */
+  .u-sticker-preview {
+    width: calc(var(--stage-side) - 52px);
+    max-width: 100%;
+  }
+}
+
+/* Mobile: the sticky preview must leave room for controls beneath. */
+@media (max-width: 1023.98px) {
+  .u-sticker-preview {
+    max-width: min(56vw, 300px);
+  }
+}
+
+/* Compact single-line slider row: label | track | mono readout.
+   Structure-dependent on CellSlider (root > header(label+output) +
+   track): the header dissolves via display:contents and the grid on
+   the root re-seats its parts. Applied by wrapping <CellSlider/> in a
+   .u-cslider-row element. */
+.u-cslider-row > div {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  column-gap: 10px;
+}
+.u-cslider-row > div > div:first-child {
+  display: contents;
+}
+.u-cslider-row > div > div:first-child > label {
+  grid-column: 1;
+  grid-row: 1;
+  white-space: nowrap;
+}
+.u-cslider-row > div > div:first-child > output {
+  grid-column: 3;
+  grid-row: 1;
+  justify-self: end;
+  white-space: nowrap;
+}
+.u-cslider-row > div > div:last-child {
+  grid-column: 2;
+  grid-row: 1;
+}
+/* Variant: hide the visible label (the input keeps its aria-label) —
+   used where a toggle pill already names the row (Shadow strength). */
+.u-cslider-bare > div > div:first-child > label {
+  display: none;
+}

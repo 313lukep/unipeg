@@ -34,24 +34,27 @@ export default function LookupBar({ onLookup, onInvalid, busy }: LookupBarProps)
   };
 
   return (
-    <form onSubmit={submit} className="flex w-full flex-col gap-2">
+    <form onSubmit={submit} className="flex w-full items-center gap-2">
       <MicroLabel tone="pink">Load</MicroLabel>
-      <div className="flex items-center gap-2">
-        <input
-          value={value}
-          onChange={(e) => setValue(e.currentTarget.value)}
-          placeholder="# PIECE NUMBER"
-          inputMode="numeric"
-          autoComplete="off"
-          spellCheck={false}
-          enterKeyHint="go"
-          aria-label="Piece number"
-          className="h-[var(--control-h)] min-h-[44px] w-full min-w-0 flex-1 border-2 border-line bg-card px-3 font-mono text-[15px] text-ink placeholder:text-mute"
-        />
-        <Pill variant="ink" type="submit" disabled={busy} className="font-mono">
-          {busy ? "READING…" : "LOAD"}
-        </Pill>
-      </div>
+      <input
+        value={value}
+        onChange={(e) => setValue(e.currentTarget.value)}
+        placeholder="# PIECE NUMBER"
+        inputMode="numeric"
+        autoComplete="off"
+        spellCheck={false}
+        enterKeyHint="go"
+        aria-label="Piece number"
+        className="h-[var(--control-h)] min-h-[44px] w-full min-w-0 flex-1 border-2 border-line bg-card px-3 font-mono text-[15px] text-ink placeholder:text-mute"
+      />
+      <Pill
+        variant="ink"
+        type="submit"
+        disabled={busy}
+        className="shrink-0 font-mono"
+      >
+        {busy ? "READING…" : "LOAD"}
+      </Pill>
     </form>
   );
 }

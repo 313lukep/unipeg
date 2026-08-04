@@ -57,7 +57,7 @@ function Thumb({
       onClick={() => onSelect(entry.id)}
       disabled={busy}
       aria-label={`Load piece ${entry.id} again`}
-      className="u-focus-square flex min-h-[44px] min-w-[44px] cursor-pointer flex-col items-center gap-1 disabled:cursor-default disabled:opacity-60"
+      className="u-focus-square flex min-h-[44px] min-w-[44px] shrink-0 cursor-pointer flex-col items-center gap-1 disabled:cursor-default disabled:opacity-60"
     >
       <canvas
         ref={ref}
@@ -78,10 +78,12 @@ export default function RecentLookups({
   busy,
 }: RecentLookupsProps) {
   if (entries.length === 0) return null;
+  // One compact line: label left, thumbnails in a horizontal scroller —
+  // sits beside the upload control above the stage without adding rows.
   return (
-    <div className="flex w-full flex-col gap-2">
+    <div className="flex w-full min-w-0 items-center gap-2">
       <MicroLabel tone="mute">Recent</MicroLabel>
-      <div className="flex flex-wrap items-start gap-2">
+      <div className="flex min-w-0 flex-1 items-start gap-[4px] overflow-x-auto">
         {entries.map((e) => (
           <Thumb key={e.id} entry={e} onSelect={onSelect} busy={busy} />
         ))}

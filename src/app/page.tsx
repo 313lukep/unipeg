@@ -1,16 +1,29 @@
 "use client";
 
 /**
- * unipegPFP — the artboard. Mobile portrait first; desktop caps at 960px
- * with the stage left (cols 1–16) and the controls rail right (cols 17–24),
- * a --line rule on the split.
+ * unipegPFP — the artboard, laid out to the owner's spec.
+ *
+ * Desktop (>=1024px, page still capped at 960px): brand bar, then piece
+ * number + registry on one line, the LOAD row, one compact row of RECENT
+ * thumbnails + the upload/recover control, then the MAIN ROW — stage left
+ * (square, height-driven via --stage-side) with the active tool's previews
+ * stacked to its right — and finally the tool tabs + ALL controls in a
+ * compact multi-column grid with the condensed export row. The whole page
+ * from brand bar to download button fits 1280x900 with no vertical scroll.
+ *
+ * Mobile: same DOM order; the active tool's preview is sticky under the
+ * pinned brand bar (z below it) so it stays visible while the compacted
+ * controls scroll beneath.
  *
  * The page owns the piece state machine (idle | loading | loaded | error):
- *   resolvePiece -> svgToGrid -> extractPieceTheme/applyPieceTheme ->
- *   detectHeadSeed (initial sticker selection) -> coronation handover +
- *   column-wipe theatre. Errors surface per UpegLookupError code, mono and
- *   in-palette. The recovery path (upload/drop/paste) produces a piece with
- *   provenance 'recovered' — masthead stays wordmark, both tools still work.
+ * resolvePiece -> svgToGrid -> extractPieceTheme/applyPieceTheme ->
+ * detectHeadSeed (initial sticker selection) -> coronation handover +
+ * column-wipe theatre. Errors surface per UpegLookupError code, mono and
+ * in-palette. The recovery path (upload/drop/paste) produces a piece with
+ * provenance 'recovered' — masthead stays wordmark, both tools still work.
+ *
+ * Both tools stay mounted (their providers hold the settings) so state
+ * persists across tab switches; only visibility toggles.
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -20,8 +33,17 @@ import LookupBar from "@/components/LookupBar";
 import Stage from "@/components/Stage";
 import RecentLookups, { type RecentEntry } from "@/components/RecentLookups";
 import UploadDrop from "@/components/UploadDrop";
-import FullBodyPanel from "@/components/panels/FullBodyPanel";
-import StickerPanel from "@/components/panels/StickerPanel";
+import {
+  FullBodyProvider,
+  FullBodyPreview,
+  FullBodyControls,
+} from "@/components/panels/FullBodyPanel";
+import {
+  StickerProvider,
+  StickerPreview,
+  StickerControls,
+  StickerStageDragLayer,
+} from "@/components/panels/StickerPanel";
 import MicroLabel from "@/components/ui/MicroLabel";
 import Pill from "@/components/ui/Pill";
 import { detectHeadSeed, svgToGrid, GridValidationError } from "@/lib/grid";
@@ -46,6 +68,11 @@ type Tool = "fullbody" | "sticker";
 const RECENTS_KEY = "unipegpfp.recents";
 const RECENTS_MAX = 8;
 const ROW_TICK_MS = 45;
+
+/** Grid classes shared by both main-row states (loaded and not). */
+const MAIN_ROW_CLASS =
+  "mt-[10px] grid grid-cols-1 gap-[10px] " +
+  "lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)] lg:gap-x-[24px] lg:gap-y-[14px]";
 
 /** Placeholder metadata for recovered pieces (no seed exists). */
 const RECOVERED_METADATA: UpegMetadata = {
@@ -137,8 +164,7 @@ export default function Home() {
   const [aliveCount, setAliveCount] = useState<number | null>(null);
   const [tool, setTool] = useState<Tool>("fullbody");
   const [selection, setSelection] = useState<CellRect | null>(null);
-  // X-crop ghost in Full-Body Fit — on by default per DESIGN.md. One state
-  // drives both the panel preview circle and the stage's dashed circle.
+  // X-crop ghost in Full-Body Fit — on by default per DESIGN.md.
   const [cropGhost, setCropGhost] = useState(true);
   const [loadingRow, setLoadingRow] = useState(0);
   const [wipeKey, setWipeKey] = useState(0);
@@ -194,20 +220,17 @@ export default function Home() {
   }, [stopRows]);
   useEffect(() => stopRows, [stopRows]);
 
-  const crown = useCallback(
-    (nextPiece: UpegPiece, nextGrid: Grid) => {
-      const t = extractPieceTheme(nextGrid);
-      applyPieceTheme(t);
-      setPiece(nextPiece);
-      setGrid(nextGrid);
-      setTheme(t);
-      setSelection(initialSelection(nextGrid));
-      setErrorText(null);
-      setPhase("loaded");
-      setWipeKey((k) => k + 1);
-    },
-    [],
-  );
+  const crown = useCallback((nextPiece: UpegPiece, nextGrid: Grid) => {
+    const t = extractPieceTheme(nextGrid);
+    applyPieceTheme(t);
+    setPiece(nextPiece);
+    setGrid(nextGrid);
+    setTheme(t);
+    setSelection(initialSelection(nextGrid));
+    setErrorText(null);
+    setPhase("loaded");
+    setWipeKey((k) => k + 1);
+  }, []);
 
   const loadPiece = useCallback(
     async (id: number) => {
@@ -277,57 +300,79 @@ export default function Home() {
   const busy = phase === "loading";
 
   return (
-    <main className="mx-auto flex w-full max-w-[960px] flex-1 flex-col px-4 pb-16">
+    <main className="mx-auto flex w-full max-w-[960px] flex-1 flex-col px-4 pb-[24px]">
       {/* pinned brand bar: big wordmark, credit, theme toggle */}
       <BrandBar />
 
-      {/* piece-number slot */}
-      <Masthead pieceId={pieceId} />
-
-      <RegistryLine
-        piece={piece}
-        aliveCount={aliveCount}
-        swatches={theme?.swatches ?? []}
-        mono={theme?.mono ?? false}
-      />
-
-      {/* THE ARTBOARD: stage cols 1–16, rail cols 17–24 at the 960px cap */}
-      <div className="mt-6 grid grid-cols-1 gap-8 min-[960px]:grid-cols-[2fr_1fr] min-[960px]:gap-0">
-        {/* ---- stage column ---- */}
-        <div className="flex min-w-0 flex-col gap-6 min-[960px]:pr-6">
-          <LookupBar onLookup={loadPiece} onInvalid={handleInvalid} busy={busy} />
-
-          <Stage
-            grid={grid}
-            phase={phase}
-            loadingRow={loadingRow}
-            mode={tool}
-            selection={selection}
-            onSelectionChange={setSelection}
-            wipeKey={wipeKey}
+      {/* piece number + registry line — one line on desktop */}
+      <div className="flex flex-col lg:flex-row lg:items-center lg:gap-x-[16px]">
+        <Masthead pieceId={pieceId} />
+        <div className="min-w-0 lg:pt-[26px]">
+          <RegistryLine
+            piece={piece}
+            aliveCount={aliveCount}
+            swatches={theme?.swatches ?? []}
+            mono={theme?.mono ?? false}
           />
+        </div>
+      </div>
 
-          {phase === "error" && errorText !== null && (
-            <p
-              role="alert"
-              className="border-2 border-ink p-3 font-mono text-[12px] leading-snug text-ink"
-            >
-              {errorText}
-            </p>
-          )}
+      {/* LOAD row */}
+      <div className="mt-[8px]">
+        <LookupBar onLookup={loadPiece} onInvalid={handleInvalid} busy={busy} />
+      </div>
 
+      {/* one compact row: recent thumbnails + the upload/recover control */}
+      <div className="mt-[8px] flex flex-col gap-[8px] lg:flex-row lg:items-center lg:gap-[16px]">
+        <div className="min-w-0 lg:flex-1">
           <RecentLookups entries={recents} onSelect={loadPiece} busy={busy} />
-
+        </div>
+        <div className="lg:shrink-0">
           <UploadDrop onRecovered={handleRecovered} busy={busy} />
         </div>
+      </div>
 
-        {/* ---- controls rail: rule exactly on the split ---- */}
-        <div className="flex min-w-0 flex-col gap-6 min-[960px]:border-l min-[960px]:border-line min-[960px]:pl-6">
-          {loaded && grid !== null && selection !== null ? (
-            <>
-              <div className="flex flex-col gap-2">
-                <MicroLabel tone="pink">Tool</MicroLabel>
+      {loaded && grid !== null && selection !== null ? (
+        <FullBodyProvider
+          grid={grid}
+          pieceId={pieceId}
+          cropGhost={cropGhost}
+          onCropGhostChange={setCropGhost}
+        >
+          <StickerProvider grid={grid} pieceId={pieceId} selection={selection}>
+            <div className={MAIN_ROW_CLASS}>
+              {/* MAIN ROW left: the stage (cell-snapped CropBox in sticker
+                  mode; dragging it low-reses the sticker preview) */}
+              <div className="min-w-0 lg:col-start-1 lg:row-start-1 lg:max-w-[var(--stage-side)]">
+                <StickerStageDragLayer active={tool === "sticker"}>
+                  <Stage
+                    grid={grid}
+                    phase={phase}
+                    loadingRow={loadingRow}
+                    mode={tool}
+                    selection={selection}
+                    onSelectionChange={setSelection}
+                    wipeKey={wipeKey}
+                  />
+                </StickerStageDragLayer>
+              </div>
+
+              {/* MAIN ROW right: the active tool's previews. On mobile this
+                  block is sticky under the pinned brand bar (z below its
+                  z-50) so the preview stays visible while controls scroll. */}
+              <div className="min-w-0 max-lg:sticky max-lg:top-[60px] max-lg:z-40 max-lg:border-b max-lg:border-line max-lg:bg-paper max-lg:pb-[8px] lg:col-start-2 lg:row-start-1">
+                <div className={tool === "fullbody" ? "" : "hidden"}>
+                  <FullBodyPreview />
+                </div>
+                <div className={tool === "sticker" ? "" : "hidden"}>
+                  <StickerPreview />
+                </div>
+              </div>
+
+              {/* BELOW: tool tabs + ALL controls, compact multi-column */}
+              <div className="flex min-w-0 flex-col gap-[8px] lg:col-span-2 lg:row-start-2">
                 <div className="flex flex-wrap items-center gap-2">
+                  <MicroLabel tone="pink">Tool</MicroLabel>
                   <Pill
                     variant={tool === "fullbody" ? "active" : "card"}
                     aria-pressed={tool === "fullbody"}
@@ -345,47 +390,56 @@ export default function Home() {
                     Head Sticker
                   </Pill>
                 </div>
-              </div>
 
-              {/* both panels stay mounted so settings persist across tabs */}
-              <div className={tool === "fullbody" ? "" : "hidden"}>
-                <FullBodyPanel
-                  grid={grid}
-                  pieceId={pieceId}
-                  cropGhost={cropGhost}
-                  onCropGhostChange={setCropGhost}
-                />
-              </div>
-              <div className={tool === "sticker" ? "" : "hidden"}>
-                <StickerPanel
-                  grid={grid}
-                  pieceId={pieceId}
-                  selection={selection}
-                  onSelectionChange={setSelection}
-                />
-              </div>
+                {/* both stay mounted so settings persist across tabs */}
+                <div className={tool === "fullbody" ? "" : "hidden"}>
+                  <FullBodyControls />
+                </div>
+                <div className={tool === "sticker" ? "" : "hidden"}>
+                  <StickerControls />
+                </div>
 
-              {/* how-to, near the downloads */}
-              <div className="flex flex-col gap-2">
-                <MicroLabel tone="mute">How to set on X</MicroLabel>
-                <p className="text-[13px] leading-relaxed text-mute">
-                  Save the PNG, then on X: Edit profile, tap your avatar and
-                  pick the file. In X&rsquo;s cropper, pinch-zoom all the way
-                  out — the full-body export is designed to sit exactly inside
-                  the circle when fully zoomed out. The head sticker looks
-                  right at any zoom.
+                {/* how-to, condensed */}
+                <p className="text-[12px] leading-snug text-mute">
+                  On X: Edit profile {"→"} tap your avatar {"→"} pick
+                  the file, then pinch-zoom fully out — the full-body export
+                  sits exactly inside the circle. The head sticker looks right
+                  at any zoom.
                 </p>
               </div>
-            </>
-          ) : (
+            </div>
+          </StickerProvider>
+        </FullBodyProvider>
+      ) : (
+        <div className={MAIN_ROW_CLASS}>
+          <div className="flex min-w-0 flex-col gap-[10px] lg:col-start-1 lg:row-start-1 lg:max-w-[var(--stage-side)]">
+            <Stage
+              grid={grid}
+              phase={phase}
+              loadingRow={loadingRow}
+              mode={tool}
+              selection={selection}
+              onSelectionChange={setSelection}
+              wipeKey={wipeKey}
+            />
+            {phase === "error" && errorText !== null && (
+              <p
+                role="alert"
+                className="border-2 border-ink p-3 font-mono text-[12px] leading-snug text-ink"
+              >
+                {errorText}
+              </p>
+            )}
+          </div>
+          <div className="min-w-0 lg:col-start-2 lg:row-start-1">
             <p className="text-[13px] leading-relaxed text-mute">
               Load a piece by number, tap a recent one, or drop a screenshot —
               then fit the whole unicorn in X&rsquo;s circle or cut a head
               sticker.
             </p>
-          )}
+          </div>
         </div>
-      </div>
+      )}
     </main>
   );
 }

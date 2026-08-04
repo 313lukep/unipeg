@@ -1,19 +1,27 @@
 "use client";
 
 /**
- * Full-Body Fit panel — square export preview beside the circle-masked
- * version X will actually show, both blitted from the SAME composed canvas.
- * Breathing-room slider (0-30%, default 12%) re-renders live: a low-res pass
- * immediately, the full-res pass debounced ~80ms after the last change.
+ * Full-Body Fit tool, split into three placeable parts so the page can put
+ * them in different grid slots (owner's layout):
  *
- * The panel never fetches — it receives an already-loaded Grid. The circle
- * overlay is exact by construction: fullBodyCompose returns an N x N square
- * whose inscribed circle IS the X crop, so a full-inset dashed circle on the
- * square preview needs no extra maths.
+ *   <FullBodyProvider>  — owns ALL tool state + the render pipeline
+ *     <FullBodyPreview />   — 'Square export' + 'On X' cards (desktop: stacked
+ *                             right of the stage; mobile: side by side, sticky)
+ *     <FullBodyControls />  — compact control rows + the export row
+ *
+ * Behaviour is unchanged from the single-panel version: both previews blit
+ * from the SAME composed canvas; a low-res pass renders immediately on any
+ * input change and the full-res pass is debounced ~80ms; the dashed X-crop
+ * circle on the square preview is exact by construction (fullBodyCompose
+ * returns an N x N square whose inscribed circle IS the X crop) and is gated
+ * by the shared cropGhost state. imageSmoothingEnabled is re-disabled after
+ * every canvas resize.
  */
 
 import {
+  createContext,
   useCallback,
+  useContext,
   useEffect,
   useMemo,
   useRef,
@@ -65,33 +73,24 @@ function blit(src: HTMLCanvasElement, dest: HTMLCanvasElement | null): void {
   ctx.drawImage(src, 0, 0);
 }
 
-function PreviewCard({
-  label,
-  children,
-}: {
-  label: string;
+export type FullBodyProviderProps = {
+  grid: Grid;
+  pieceId: number | null;
+  /** X-crop ghost visibility — one control for preview circle AND anywhere
+   *  else the page chooses to reflect it. */
+  cropGhost: boolean;
+  onCropGhostChange: (on: boolean) => void;
   children: ReactNode;
-}) {
-  return (
-    <div className="flex min-w-0 flex-1 flex-col gap-2">
-      <MicroLabel tone="mute">{label}</MicroLabel>
-      <div className="rounded-[12px] bg-card p-3">{children}</div>
-    </div>
-  );
-}
+};
 
-export default function FullBodyPanel({
+/** All tool state + pipeline, lifted out of render so Preview and Controls
+ *  can live in different page slots while sharing one engine. */
+function useFullBodyEngine({
   grid,
   pieceId,
   cropGhost,
   onCropGhostChange,
-}: {
-  grid: Grid;
-  pieceId: number | null;
-  /** X-crop ghost visibility — one control for panel preview AND stage circle. */
-  cropGhost: boolean;
-  onCropGhostChange: (on: boolean) => void;
-}) {
+}: Omit<FullBodyProviderProps, "children">) {
   const [roomPct, setRoomPct] = useState(DEFAULT_ROOM_PCT);
   const [bgMode, setBgMode] = useState<FullBodyBgMode>("auto");
   const [size, setSize] = useState<FullBodySize>(1000);
@@ -197,7 +196,7 @@ export default function FullBodyPanel({
     [roomPct, bgOverride, size],
   );
 
-  const handleDownload = async () => {
+  const handleDownload = useCallback(async () => {
     if (busy || compositionError !== null) return;
     setBusy(true);
     try {
@@ -218,9 +217,9 @@ export default function FullBodyPanel({
     } finally {
       setBusy(false);
     }
-  };
+  }, [busy, compositionError, grid, exportOpts, filename, size]);
 
-  const handleCopy = async () => {
+  const handleCopy = useCallback(async () => {
     if (busy || compositionError !== null) return;
     setBusy(true);
     let next: "copied" | "failed" = "failed";
@@ -242,9 +241,9 @@ export default function FullBodyPanel({
       if (copyTimerRef.current !== null) clearTimeout(copyTimerRef.current);
       copyTimerRef.current = setTimeout(() => setCopyState("idle"), 2500);
     }
-  };
+  }, [busy, compositionError, grid, exportOpts]);
 
-  const copyDetectedHex = async () => {
+  const copyDetectedHex = useCallback(async () => {
     if (detectedBg === null) return;
     try {
       await navigator.clipboard.writeText(detectedBg);
@@ -254,37 +253,92 @@ export default function FullBodyPanel({
     setHexFlash(true);
     if (hexTimerRef.current !== null) clearTimeout(hexTimerRef.current);
     hexTimerRef.current = setTimeout(() => setHexFlash(false), 300);
+  }, [detectedBg]);
+
+  // Callback refs (not RefObjects) so the engine object stays ref-free —
+  // consumers attach canvases without touching ref values during render.
+  const attachSquare = useCallback((el: HTMLCanvasElement | null) => {
+    squareRef.current = el;
+  }, []);
+  const attachCircle = useCallback((el: HTMLCanvasElement | null) => {
+    circleRef.current = el;
+  }, []);
+
+  return {
+    cropGhost,
+    onCropGhostChange,
+    roomPct,
+    setRoomPct,
+    bgMode,
+    setBgMode,
+    size,
+    setSize,
+    busy,
+    savedLabel,
+    copyState,
+    hexFlash,
+    detectedBg,
+    compositionError,
+    attachSquare,
+    attachCircle,
+    filename,
+    handleDownload,
+    handleCopy,
+    copyDetectedHex,
   };
+}
 
+type FullBodyEngine = ReturnType<typeof useFullBodyEngine>;
+
+const Ctx = createContext<FullBodyEngine | null>(null);
+
+function useFullBody(): FullBodyEngine {
+  const ctx = useContext(Ctx);
+  if (ctx === null) {
+    throw new Error("FullBody parts must render inside <FullBodyProvider>");
+  }
+  return ctx;
+}
+
+export function FullBodyProvider({ children, ...props }: FullBodyProviderProps) {
+  const engine = useFullBodyEngine(props);
+  return <Ctx.Provider value={engine}>{children}</Ctx.Provider>;
+}
+
+function PreviewCard({
+  label,
+  children,
+}: {
+  label: string;
+  children: ReactNode;
+}) {
   return (
-    <section aria-label="Full-Body Fit" className="flex w-full flex-col gap-6">
-      {/* ---- crop ghost toggle: one control for panel AND stage circle ---- */}
-      <div className="flex items-center justify-between gap-2">
-        <MicroLabel tone="mute">Crop preview</MicroLabel>
-        <Pill
-          variant={cropGhost ? "active" : "card"}
-          aria-pressed={cropGhost}
-          onClick={() => onCropGhostChange(!cropGhost)}
-        >
-          X CROP {cropGhost ? "ON" : "OFF"}
-        </Pill>
-      </div>
+    <div className="u-fb-card flex min-w-0 flex-1 flex-col gap-[6px] lg:flex-none">
+      <MicroLabel tone="mute">{label}</MicroLabel>
+      <div className="rounded-[12px] bg-card p-[8px]">{children}</div>
+    </div>
+  );
+}
 
-      {/* ---- previews: square + circle mask from the SAME render ----
-           Stacked by default, 2-up ONLY in the 640-959px window (the row is
-           bounded, not overridden — Tailwind orders min-[960px] before sm in
-           the cascade), stacked again inside the narrow desktop rail so each
-           preview keeps the full rail width. */}
-      <div className="flex flex-col gap-4 sm:max-[959px]:flex-row">
+/** Square export above 'On X' (desktop); side by side on mobile so the
+ *  sticky preview stays shallow. Both blit from the same composed canvas. */
+export function FullBodyPreview() {
+  const f = useFullBody();
+  return (
+    <section
+      aria-label="Full-Body Fit preview"
+      className="flex w-full flex-col gap-[8px]"
+    >
+      <div className="flex flex-row gap-[8px] lg:flex-col lg:gap-[12px]">
         <PreviewCard label="Square export">
           <div className="relative aspect-square w-full">
             <canvas
-              ref={squareRef}
+              ref={f.attachSquare}
               aria-label="Full-body square preview"
               className="h-full w-full [image-rendering:pixelated]"
             />
             {/* X-crop ghost: the inscribed circle of the composed square. */}
-            {cropGhost && (
+            {f.cropGhost && (
               <>
                 <span
                   aria-hidden="true"
@@ -301,7 +355,7 @@ export default function FullBodyPanel({
         <PreviewCard label="On X">
           <div className="relative aspect-square w-full overflow-hidden rounded-full">
             <canvas
-              ref={circleRef}
+              ref={f.attachCircle}
               aria-label="Full-body preview inside X's circular crop"
               className="h-full w-full [image-rendering:pixelated]"
             />
@@ -309,100 +363,121 @@ export default function FullBodyPanel({
         </PreviewCard>
       </div>
 
-      {compositionError !== null && (
+      {f.compositionError !== null && (
         <p className="border-2 border-ink p-3 font-mono text-[12px] leading-snug text-ink">
-          {compositionError}
+          {f.compositionError}
         </p>
       )}
+    </section>
+  );
+}
 
-      {/* ---- breathing room (live) ---- */}
-      <CellSlider
-        label="Breathing room"
-        value={roomPct}
-        min={0}
-        max={30}
-        step={1}
-        detents={[DEFAULT_ROOM_PCT]}
-        onChange={setRoomPct}
-        format={(v) => `ROOM ${v}%`}
-      />
+/** Compact multi-column controls + condensed export row. */
+export function FullBodyControls() {
+  const f = useFullBody();
+  return (
+    <section
+      aria-label="Full-Body Fit controls"
+      className="flex w-full flex-col gap-[8px]"
+    >
+      <div className="grid grid-cols-1 items-center gap-x-[24px] gap-y-[6px] lg:grid-cols-3">
+        {/* breathing room (live) */}
+        <div className="u-cslider-row">
+          <CellSlider
+            label="Breathing room"
+            value={f.roomPct}
+            min={0}
+            max={30}
+            step={1}
+            detents={[DEFAULT_ROOM_PCT]}
+            onChange={f.setRoomPct}
+            format={(v) => `ROOM ${v}%`}
+          />
+        </div>
 
-      {/* ---- background ---- */}
-      <div className="flex flex-col gap-2">
-        <MicroLabel tone="mute">Background</MicroLabel>
+        {/* background */}
         <div className="flex flex-wrap items-center gap-2">
+          <span className="text-[13px] font-semibold text-ink">Background</span>
           {BG_PILLS.map(({ mode, label }) => (
             <Pill
               key={mode}
-              variant={bgMode === mode ? "active" : "card"}
-              aria-pressed={bgMode === mode}
-              onClick={() => setBgMode(mode)}
+              variant={f.bgMode === mode ? "active" : "card"}
+              aria-pressed={f.bgMode === mode}
+              onClick={() => f.setBgMode(mode)}
             >
               {label}
             </Pill>
           ))}
-          {detectedBg !== null && (
+          {f.detectedBg !== null && (
             <button
               type="button"
-              onClick={copyDetectedHex}
-              aria-label={`Copy detected background colour ${detectedBg}`}
+              onClick={f.copyDetectedHex}
+              aria-label={`Copy detected background colour ${f.detectedBg}`}
               className={`u-focus-square inline-flex h-[var(--control-h)] min-h-[44px] cursor-pointer items-center gap-2 font-mono text-[12px] ${
-                hexFlash ? "text-accent" : "text-mute"
+                f.hexFlash ? "text-accent" : "text-mute"
               }`}
             >
               <span
                 aria-hidden="true"
                 className="inline-block h-[8px] w-[8px]"
-                style={{ backgroundColor: detectedBg }}
+                style={{ backgroundColor: f.detectedBg }}
               />
-              {detectedBg.toUpperCase()}
+              {f.detectedBg.toUpperCase()}
             </button>
           )}
         </div>
+
+        {/* crop ghost toggle — gates the preview circle */}
+        <div className="flex items-center justify-between gap-2 lg:justify-start">
+          <MicroLabel tone="mute">Crop preview</MicroLabel>
+          <Pill
+            variant={f.cropGhost ? "active" : "card"}
+            aria-pressed={f.cropGhost}
+            onClick={() => f.onCropGhostChange(!f.cropGhost)}
+          >
+            X CROP {f.cropGhost ? "ON" : "OFF"}
+          </Pill>
+        </div>
       </div>
 
-      {/* ---- export ---- */}
-      <div className="flex flex-col gap-2">
+      {/* condensed export row: size picker + download + copy + filename */}
+      <div className="flex flex-wrap items-center gap-x-[10px] gap-y-[6px]">
         <MicroLabel tone="pink">Export</MicroLabel>
-        <div className="flex flex-wrap items-center gap-2">
-          {SIZES.map((s) => (
-            <Pill
-              key={s}
-              variant={size === s ? "active" : "card"}
-              aria-pressed={size === s}
-              onClick={() => setSize(s)}
-              className="font-mono"
-            >
-              {s}
-            </Pill>
-          ))}
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
+        {SIZES.map((s) => (
           <Pill
-            variant="ink"
-            onClick={handleDownload}
-            disabled={busy || compositionError !== null}
+            key={s}
+            variant={f.size === s ? "active" : "card"}
+            aria-pressed={f.size === s}
+            onClick={() => f.setSize(s)}
             className="font-mono"
           >
-            {savedLabel ?? `DOWNLOAD ${size}×${size} PNG`}
+            {s}
           </Pill>
-          <Pill
-            variant={copyState === "copied" ? "active" : "card"}
-            onClick={handleCopy}
-            disabled={busy || compositionError !== null}
-            className="font-mono"
-          >
-            {copyState === "copied" ? "COPIED PNG" : "COPY PNG"}
-          </Pill>
-        </div>
-        {copyState === "failed" && (
-          <p className="font-mono text-[12px] leading-none text-mute">
+        ))}
+        <Pill
+          variant="ink"
+          onClick={f.handleDownload}
+          disabled={f.busy || f.compositionError !== null}
+          className="font-mono"
+        >
+          {f.savedLabel ?? `DOWNLOAD ${f.size}×${f.size} PNG`}
+        </Pill>
+        <Pill
+          variant={f.copyState === "copied" ? "active" : "card"}
+          onClick={f.handleCopy}
+          disabled={f.busy || f.compositionError !== null}
+          className="font-mono"
+        >
+          {f.copyState === "copied" ? "COPIED PNG" : "COPY PNG"}
+        </Pill>
+        <span className="font-mono text-[12px] leading-none text-mute">
+          {f.filename}
+        </span>
+        {f.copyState === "failed" && (
+          <span className="font-mono text-[12px] leading-none text-mute">
             CLIPBOARD UNAVAILABLE {"—"} DOWNLOAD INSTEAD
-          </p>
+          </span>
         )}
-        <p className="font-mono text-[12px] leading-none text-mute">
-          {filename}
-        </p>
       </div>
     </section>
   );

@@ -21,7 +21,6 @@ import {
 } from "react";
 import { GridValidationError, imageToGrid } from "@/lib/grid";
 import type { Grid } from "@/lib/grid";
-import MicroLabel from "@/components/ui/MicroLabel";
 import Pill from "@/components/ui/Pill";
 
 export type UploadDropProps = {
@@ -117,9 +116,10 @@ export default function UploadDrop({ onRecovered, busy }: UploadDropProps) {
     if (file && !busy && !working) void handleBlob(file);
   };
 
+  // Compact pill-sized drop target (owner's layout): one row that sits
+  // beside the recents above the stage — no tall dashed box.
   return (
-    <div className="flex w-full flex-col gap-2">
-      <MicroLabel tone="mute">Recover from image</MicroLabel>
+    <div className="flex w-full flex-col gap-1 lg:w-auto">
       <div
         onDragOver={(e) => {
           e.preventDefault();
@@ -127,7 +127,7 @@ export default function UploadDrop({ onRecovered, busy }: UploadDropProps) {
         }}
         onDragLeave={() => setDragOver(false)}
         onDrop={onDrop}
-        className={`flex flex-wrap items-center gap-3 border-2 border-dashed p-3 ${
+        className={`flex items-center gap-2 border-2 border-dashed px-[6px] py-[3px] ${
           dragOver ? "border-accent" : "border-line"
         }`}
       >
@@ -135,12 +135,12 @@ export default function UploadDrop({ onRecovered, busy }: UploadDropProps) {
           variant="card"
           onClick={() => inputRef.current?.click()}
           disabled={busy || working}
-          className="font-mono"
+          className="shrink-0 font-mono"
         >
           {working ? "READING PIXELS…" : "UPLOAD IMAGE"}
         </Pill>
-        <span className="text-[13px] text-mute">
-          or drop / paste a screenshot of a piece
+        <span className="text-[12px] leading-tight text-mute">
+          or drop / paste a screenshot
         </span>
         <input
           ref={inputRef}
