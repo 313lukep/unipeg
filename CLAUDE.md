@@ -1,4 +1,7 @@
-# Unipeg PFP Studio — project context
+# unipegPFP — project context
+
+The app's name is **unipegPFP** (owner's choice — use this exact casing in all UI,
+titles, and metadata).
 
 ## What this project is
 
