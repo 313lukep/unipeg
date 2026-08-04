@@ -6,7 +6,10 @@
  *   crop -> keyOut(bg) -> dilate(outlineWidth, outlineColour)
  *        [-> optional second dilate(1, darker tone)]
  *        -> rasterise to offscreen at final scale, smoothing OFF
- *        -> THEN rotate on the destination canvas (rotation AFTER upscale)
+ *        -> THEN rotate (rotation AFTER upscale) via a manual nearest-
+ *           neighbour inverse mapping — NOT ctx.rotate()+drawImage, which
+ *           antialiases the rotated edge geometry in Chromium regardless of
+ *           imageSmoothingEnabled=false
  *        -> composite onto background
  *        -> optional drop shadow from the rotated sticker's alpha.
  *
@@ -100,6 +103,59 @@ export function resolveStickerBackground(grid: Grid, sel: CellRect, opts: Sticke
       return complementTint(bg);
     }
   }
+}
+
+/**
+ * Rotate an RGBA pixel buffer by `rad` around its own centre and place it in
+ * a destW x destH destination so the source centre lands at (cx, cy), using
+ * pure nearest-neighbour inverse mapping. Every destination pixel is either
+ * fully transparent (outside the rotated source) or an EXACT copy of one
+ * source pixel — no colour can be invented, so rotated edges never blend.
+ *
+ * Equivalent placement maths to the old ctx.translate(cx, cy) -> rotate(rad)
+ * -> drawImage(src, -srcW/2, -srcH/2), minus the edge antialiasing Chromium
+ * applies to rotated drawImage geometry even with smoothing disabled.
+ *
+ * Pure function (no DOM) so the no-blend guarantee is unit-testable in node.
+ */
+export function rotatePixelsNearest(
+  src: Uint8ClampedArray,
+  srcW: number,
+  srcH: number,
+  rad: number,
+  destW: number,
+  destH: number,
+  cx: number,
+  cy: number,
+): Uint8ClampedArray {
+  if (src.length !== srcW * srcH * 4) {
+    throw new GridValidationError(
+      `rotatePixelsNearest: src length ${src.length} does not match ${srcW}x${srcH} RGBA`,
+    );
+  }
+  const out = new Uint8ClampedArray(destW * destH * 4);
+  // Inverse rotation: dest = R(rad)·(srcPt - centre) + (cx, cy)
+  //               =>  srcPt = R(-rad)·(dest - (cx, cy)) + centre.
+  const cos = Math.cos(rad);
+  const sin = Math.sin(rad);
+  const halfW = srcW / 2;
+  const halfH = srcH / 2;
+  for (let y = 0; y < destH; y++) {
+    const dy = y + 0.5 - cy; // sample at the destination pixel centre
+    for (let x = 0; x < destW; x++) {
+      const dx = x + 0.5 - cx;
+      const sx = Math.floor(dx * cos + dy * sin + halfW);
+      const sy = Math.floor(-dx * sin + dy * cos + halfH);
+      if (sx < 0 || sy < 0 || sx >= srcW || sy >= srcH) continue;
+      const si = (sy * srcW + sx) * 4;
+      const di = (y * destW + x) * 4;
+      out[di] = src[si];
+      out[di + 1] = src[si + 1];
+      out[di + 2] = src[si + 2];
+      out[di + 3] = src[si + 3];
+    }
+  }
+  return out;
 }
 
 function withAlpha(hex: string, alpha: number): string {
