@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { renderToImageData, unipegGrid, PALETTE } from "./helpers";
 import { imageToGrid } from "../imageToGrid";
-import { gridsEqual } from "../grid";
+import { gridsEqual, recomputePalette } from "../grid";
 import { hexToRgb } from "../colour";
 import { GridValidationError } from "../types";
 
@@ -166,6 +166,100 @@ describe("imageToGrid", () => {
     expect(grid.h).toBe(24);
     expect(cellSizePx).toBeCloseTo(3, 0);
     expect(gridsEqual(grid, src)).toBe(true);
+  });
+
+  it("recovers the full 24x24 through a low-contrast white margin (7px at 5px/cell)", () => {
+    // Regression (finding 1): #ffffff differs from the #e6e1f2 art background
+    // by at most 30 per channel — under EDGE_CHANNEL_THRESHOLD — so the
+    // margin/art boundary produced no strong edge signal. With an off-lattice
+    // margin width the fit then spanned only the non-background content and
+    // imageToGrid silently returned a content-only crop (16x21, not 24x24).
+    const src = unipegGrid();
+    const img = renderToImageData(src, 5, {
+      outW: 7 + 24 * 5 + 8,
+      outH: 7 + 24 * 5 + 8,
+      marginLeft: 7,
+      marginTop: 7,
+      marginColour: "#ffffff",
+    });
+    const { grid, cellSizePx, origin } = imageToGrid(img);
+    expect(grid.w).toBe(24);
+    expect(grid.h).toBe(24);
+    expect(grid.palette).not.toContain("#ffffff");
+    expect(gridsEqual(grid, src)).toBe(true);
+    expect(cellSizePx).toBeCloseTo(5, 0);
+    expect(origin.x).toBeCloseTo(7, 0);
+    expect(origin.y).toBeCloseTo(7, 0);
+  });
+
+  it("recovers the full 24x24 through a low-contrast white margin (11px at 17px/cell)", () => {
+    // Regression (finding 1), second geometry: same as the #404040-margin
+    // recovery test above but with a white margin over the pastel background.
+    const src = unipegGrid();
+    const img = renderToImageData(src, 17, {
+      outW: 11 + 24 * 17 + 13,
+      outH: 11 + 24 * 17 + 15,
+      marginLeft: 11,
+      marginTop: 11,
+      marginColour: "#ffffff",
+    });
+    const { grid, cellSizePx, origin } = imageToGrid(img);
+    expect(grid.w).toBe(24);
+    expect(grid.h).toBe(24);
+    expect(grid.palette).not.toContain("#ffffff");
+    expect(gridsEqual(grid, src)).toBe(true);
+    expect(cellSizePx).toBeCloseTo(17, 0);
+    expect(origin.x).toBeCloseTo(11, 0);
+    expect(origin.y).toBeCloseTo(11, 0);
+  });
+
+  it("keeps genuinely distinct close shades separate when sampling is exact", () => {
+    // Regression (finding 2): greedy clustering with a flat 32 RGB merge
+    // distance folded a #ffb0e0 patch (Euclidean distance 24.6 from the
+    // #ff9ad5 body) into the body colour even though every cell sample was
+    // exact. With zero measured sampling noise, distinct colours must
+    // survive.
+    const src = unipegGrid();
+    for (let y = 12; y < 15; y++) {
+      for (let x = 6; x < 9; x++) src.cells[y][x] = "#ffb0e0";
+    }
+    const patched = recomputePalette(src);
+    const img = renderToImageData(patched, 12, { outW: 24 * 12, outH: 24 * 12 });
+    const { grid } = imageToGrid(img);
+    expect(grid.w).toBe(24);
+    expect(grid.h).toBe(24);
+    expect(grid.palette).toContain("#ff9ad5");
+    expect(grid.palette).toContain("#ffb0e0");
+    expect(gridsEqual(grid, patched)).toBe(true);
+  });
+
+  it("keeps a background-coloured margin of on-lattice width as canvas (documented ambiguity)", () => {
+    // A margin painted in exactly the art's background colour whose width is
+    // a whole number of cells is indistinguishable from a larger canvas — no
+    // geometric or colour signal can tell them apart — so it is kept as
+    // extra background cells (see the module doc of imageToGrid).
+    const src = unipegGrid();
+    const img = renderToImageData(src, 10, {
+      outW: 20 + 24 * 10 + 20,
+      outH: 20 + 24 * 10 + 20,
+      marginLeft: 20,
+      marginTop: 20,
+      marginColour: PALETTE.bg,
+    });
+    const { grid } = imageToGrid(img);
+    expect(grid.w).toBe(28);
+    expect(grid.h).toBe(28);
+    for (let y = 0; y < 24; y++) {
+      for (let x = 0; x < 24; x++) {
+        expect(grid.cells[y + 2][x + 2]).toBe(src.cells[y][x]);
+      }
+    }
+    for (let i = 0; i < 28; i++) {
+      expect(grid.cells[0][i]).toBe(PALETTE.bg);
+      expect(grid.cells[27][i]).toBe(PALETTE.bg);
+      expect(grid.cells[i][0]).toBe(PALETTE.bg);
+      expect(grid.cells[i][27]).toBe(PALETTE.bg);
+    }
   });
 
   it("throws a helpful GridValidationError when no period exists (flat image)", () => {
