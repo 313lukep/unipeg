@@ -352,14 +352,14 @@ export function FullBodyPreview() {
                   className="pointer-events-none absolute inset-0 rounded-full border border-dashed border-mute"
                 />
                 <span className="pointer-events-none absolute left-1/2 top-0 -translate-x-1/2 -translate-y-1/2 bg-card px-1">
-                  <MicroLabel tone="mute">X crop</MicroLabel>
+                  <MicroLabel tone="mute">pfp crop</MicroLabel>
                 </span>
               </>
             )}
           </div>
         </PreviewCard>
 
-        <PreviewCard label="On X">
+        <PreviewCard label="Pfp">
           <div className="relative aspect-square w-full overflow-hidden rounded-full">
             <canvas
               ref={circleRef}
@@ -442,7 +442,7 @@ export function FullBodyControls() {
             aria-pressed={f.cropGhost}
             onClick={() => f.onCropGhostChange(!f.cropGhost)}
           >
-            X CROP {f.cropGhost ? "ON" : "OFF"}
+            PFP CROP {f.cropGhost ? "ON" : "OFF"}
           </Pill>
         </div>
       </div>

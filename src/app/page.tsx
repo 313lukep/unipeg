@@ -32,7 +32,6 @@ import RegistryLine from "@/components/RegistryLine";
 import LookupBar from "@/components/LookupBar";
 import Stage from "@/components/Stage";
 import RecentLookups, { type RecentEntry } from "@/components/RecentLookups";
-import UploadDrop from "@/components/UploadDrop";
 import {
   FullBodyProvider,
   FullBodyPreview,
@@ -52,7 +51,6 @@ import {
   resolvePiece,
   startAlivePolling,
   UpegLookupError,
-  type UpegMetadata,
   type UpegPiece,
 } from "@/lib/upeg";
 import {
@@ -72,29 +70,8 @@ const ROW_TICK_MS = 45;
 /** Grid classes shared by both main-row states (loaded and not). */
 const MAIN_ROW_CLASS =
   "mt-[10px] grid grid-cols-1 gap-[10px] " +
-  "lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)] lg:gap-x-[24px] lg:gap-y-[14px]";
+  "lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)] lg:gap-x-[24px] lg:gap-y-[8px]";
 
-/** Placeholder metadata for recovered pieces (no seed exists). */
-const RECOVERED_METADATA: UpegMetadata = {
-  backGroundColor: 0,
-  body: 0,
-  eyes: 0,
-  hair: 0,
-  horn: 0,
-  legsBack: 0,
-  legsFront: 0,
-  wings: 0,
-  tail: 0,
-  accessories: 0,
-  ground: 0,
-  bodyColor: 0,
-  eyesColor: 0,
-  hairColor: 0,
-  hornColor: 0,
-  groundColor: 0,
-  accessoriesColor: 0,
-  tailColor: 0,
-};
 
 /** Head seed with a safe fallback: top-centre square of the grid. */
 function initialSelection(grid: Grid): CellRect {
@@ -276,26 +253,7 @@ export default function Home() {
     [stopRows],
   );
 
-  const handleRecovered = useCallback(
-    (g: Grid) => {
-      loadSeq.current++;
-      stopRows();
-      crown(
-        {
-          id: 0, // no serial — masthead stays wordmark, registry skips the id
-          seed: 0n,
-          svg: "",
-          metadata: RECOVERED_METADATA,
-          provenance: "recovered",
-        },
-        g,
-      );
-    },
-    [crown, stopRows],
-  );
-
-  const pieceId =
-    piece !== null && piece.provenance !== "recovered" ? piece.id : null;
+  const pieceId = piece !== null ? piece.id : null;
   const loaded = phase === "loaded" && grid !== null && selection !== null;
   const busy = phase === "loading";
 
@@ -322,14 +280,9 @@ export default function Home() {
         <LookupBar onLookup={loadPiece} onInvalid={handleInvalid} busy={busy} />
       </div>
 
-      {/* one compact row: recent thumbnails + the upload/recover control */}
-      <div className="mt-[8px] flex flex-col gap-[8px] lg:flex-row lg:items-center lg:gap-[16px]">
-        <div className="min-w-0 lg:flex-1">
-          <RecentLookups entries={recents} onSelect={loadPiece} busy={busy} />
-        </div>
-        <div className="lg:shrink-0">
-          <UploadDrop onRecovered={handleRecovered} busy={busy} />
-        </div>
+      {/* recent thumbnails */}
+      <div className="mt-[8px]">
+        <RecentLookups entries={recents} onSelect={loadPiece} busy={busy} />
       </div>
 
       {loaded && grid !== null && selection !== null ? (
@@ -371,7 +324,7 @@ export default function Home() {
 
               {/* BELOW: tool tabs + ALL controls, compact multi-column.
                   u-dense = 36px control chrome on desktop only. */}
-              <div className="u-dense flex min-w-0 flex-col gap-[8px] lg:col-span-2 lg:row-start-2">
+              <div className="u-dense flex min-w-0 flex-col gap-[8px] lg:col-span-2 lg:row-start-2 lg:gap-[6px]">
                 <div className="flex flex-wrap items-center gap-2">
                   <MicroLabel tone="pink">Tool</MicroLabel>
                   <Pill
@@ -400,13 +353,6 @@ export default function Home() {
                   <StickerControls />
                 </div>
 
-                {/* how-to, condensed */}
-                <p className="text-[12px] leading-snug text-mute">
-                  On X: Edit profile {"→"} tap your avatar {"→"} pick
-                  the file, then pinch-zoom fully out — the full-body export
-                  sits exactly inside the circle. The head sticker looks right
-                  at any zoom.
-                </p>
               </div>
             </div>
           </StickerProvider>
