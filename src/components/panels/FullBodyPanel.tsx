@@ -331,7 +331,7 @@ export default function FullBodyPanel({
               type="button"
               onClick={copyDetectedHex}
               aria-label={`Copy detected background colour ${detectedBg}`}
-              className={`u-focus-square inline-flex h-12 min-h-[44px] cursor-pointer items-center gap-2 font-mono text-[12px] ${
+              className={`u-focus-square inline-flex h-[var(--control-h)] min-h-[44px] cursor-pointer items-center gap-2 font-mono text-[12px] ${
                 hexFlash ? "text-accent" : "text-mute"
               }`}
             >
@@ -351,7 +351,7 @@ export default function FullBodyPanel({
               onClick={() => setBgMode(hex)}
               aria-label={`Background ${hex}`}
               aria-pressed={bgMode === hex}
-              className={`h-12 min-h-[44px] w-12 min-w-[44px] cursor-pointer border-2 ${
+              className={`h-[var(--control-h)] min-h-[44px] w-[var(--control-h)] min-w-[44px] cursor-pointer border-2 ${
                 bgMode === hex ? "border-accent" : "border-line"
               }`}
               style={{ backgroundColor: hex }}

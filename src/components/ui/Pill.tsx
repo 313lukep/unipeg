@@ -7,12 +7,12 @@ import type {
 export type PillVariant = "ink" | "card" | "active";
 
 /**
- * Full-radius pill, exactly 3 cells tall (h-12 with --spacing = cell/4),
+ * Full-radius pill, 3 cells tall capped at 56px (--control-h),
  * with a 44px floor for small viewports. Focus ring is deliberately
  * square-cornered even though the pill is round (.u-focus-square).
  */
 const BASE =
-  "u-focus-square inline-flex h-12 min-h-[44px] select-none items-center " +
+  "u-focus-square inline-flex h-[var(--control-h)] min-h-[44px] select-none items-center " +
   "justify-center gap-2 rounded-full px-4 text-[13px] font-semibold " +
   "leading-none whitespace-nowrap";
 

@@ -78,7 +78,7 @@ export default function CellSlider({
         </output>
       </div>
 
-      <div className="relative h-12 min-h-[44px] w-full">
+      <div className="relative h-[var(--control-h)] min-h-[44px] w-full">
         {/* track hairline */}
         <span
           aria-hidden="true"

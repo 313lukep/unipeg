@@ -41,6 +41,12 @@
   /* THE ARTBOARD: one variable drives everything */
   --cell: min(calc(100vw / 24), 40px);
 
+  /* Interactive control height: 3 cells on mobile (~49px at 390px wide),
+     capped at 56px so desktop's 40px cells don't balloon pills into
+     120px near-circles. Layout stays on the cell lattice; only control
+     CHROME is density-capped. */
+  --control-h: min(calc(var(--cell) * 3), 56px);
+
   /* self-hosted Fontsource families */
   --font-display: "Bricolage Grotesque Variable", "Instrument Sans Variable",
     system-ui, sans-serif;

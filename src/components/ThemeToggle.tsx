@@ -51,7 +51,7 @@ export default function ThemeToggle() {
       aria-label={
         theme === "dark" ? "Switch to light theme" : "Switch to dark theme"
       }
-      className="u-focus-square inline-flex h-12 min-h-[44px] w-12 min-w-[44px] cursor-pointer items-center justify-center"
+      className="u-focus-square inline-flex h-[var(--control-h)] min-h-[44px] w-[var(--control-h)] min-w-[44px] cursor-pointer items-center justify-center"
     >
       <span
         aria-hidden="true"
