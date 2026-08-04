@@ -118,5 +118,68 @@ describe("refreshAliveMap", () => {
     expect(result.addedCount).toBe(1);
     expect(result.removedCount).toBe(1);
     expect(result.blockNumber).toBe(1000);
+    expect(result.pendingAdded.size).toBe(0);
+  });
+
+  it("carries unresolved added ids forward and retries them on the next poll", async () => {
+    // Regression: a mint whose owner read failed (owner emptied / transfer
+    // raced the getLogs window) left the id unresolved, and the next poll's
+    // log window started after the mint event — the id was dropped forever.
+    const mintLog = { eventName: "OnUpegMinted", args: { owner: A, upegId: 500001n } };
+    const failingClient = {
+      getBlockNumber: async () => 1000n,
+      getLogs: async () => [mintLog],
+      readContract: async () => {
+        throw new Error("revert");
+      },
+    } as unknown as PublicClient;
+
+    // Poll 1: owner read fails — the id is reported as pending, not dropped.
+    const r1 = await refreshAliveMap({ map: { "1": "9" }, blockNumber: 900 }, failingClient);
+    expect(r1.map["500001"]).toBeUndefined();
+    expect(r1.addedCount).toBe(0);
+    expect(r1.pendingAdded.get("500001")).toBe(A);
+
+    // Poll 2: no new events (window starts after the mint), owner read now
+    // succeeds — the carried-forward id resolves.
+    const r2 = await refreshAliveMap(
+      { map: r1.map, blockNumber: r1.blockNumber, pendingAdded: r1.pendingAdded },
+      fakeClient({
+        blockNumber: 1010n,
+        logs: [],
+        pages: { [A]: [[{ id: 500001n, seed: 777n }]] },
+      }),
+    );
+    expect(r2.map["500001"]).toBe("777");
+    expect(r2.addedCount).toBe(1);
+    expect(r2.pendingAdded.size).toBe(0);
+  });
+
+  it("drops a pending id that is burned before its seed resolves", async () => {
+    const pending = new Map<string, `0x${string}`>([["500001", A]]);
+    const r = await refreshAliveMap(
+      { map: { "1": "9" }, blockNumber: 900, pendingAdded: pending },
+      fakeClient({
+        blockNumber: 1010n,
+        logs: [{ eventName: "OnUpegBurned", args: { owner: A, upegId: 500001n } }],
+      }),
+    );
+    expect(r.map["500001"]).toBeUndefined();
+    expect(r.pendingAdded.size).toBe(0);
+    expect(r.removedCount).toBe(0); // never in the map, so nothing removed
+  });
+
+  it("follows a transfer of a pending id to the new owner before resolving", async () => {
+    const pending = new Map<string, `0x${string}`>([["500001", A]]);
+    const r = await refreshAliveMap(
+      { map: {}, blockNumber: 900, pendingAdded: pending },
+      fakeClient({
+        blockNumber: 1010n,
+        logs: [{ eventName: "OnUpegTransfer", args: { from: A, to: B, upegId: 500001n } }],
+        pages: { [B]: [[{ id: 500001n, seed: 888n }]] },
+      }),
+    );
+    expect(r.map["500001"]).toBe("888");
+    expect(r.pendingAdded.size).toBe(0);
   });
 });

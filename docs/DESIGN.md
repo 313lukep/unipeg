@@ -132,3 +132,16 @@ full-radius; surfaces are 12px radius; nothing else is rounded.
 - Keyboard: everything reachable; visible square focus rings; the crop selector operable
   by arrow keys (move) / shift+arrows (resize).
 - Mobile portrait is the first-class layout (the reference screenshot is mobile).
+
+## As built (resolved deviations — the doc matches reality here)
+
+- **Fonts** are self-hosted via Fontsource (`@fontsource-variable/bricolage-grotesque`,
+  `@fontsource-variable/instrument-sans`, `@fontsource/space-mono` 400/700) instead of
+  `next/font/google` — same three families, same weights.
+- **Tilt detents** are **0 / −20°** with a default of **−22°** (the build-spec default).
+  The ±8° detents above were unreachable on the slider's 5° snap lattice; −22° remains
+  reachable as the initial value only. Pointer drags keep the detent magnet; keyboard
+  steps are exempt from it so every lattice value stays selectable.
+- **Loading fill** is implemented as row-progress (a band filling top-down with the mono
+  `READING CHAIN — ROW NN/24` counter) rather than per-cell scan order; reduced motion
+  gets the static 40% checker + counter per spec.

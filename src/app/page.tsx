@@ -90,7 +90,9 @@ function errorCopy(err: unknown): string {
   if (err instanceof UpegLookupError) {
     switch (err.code) {
       case "invalid-id":
-        return "UpegInvalidId — a piece id is a whole number, 1 or higher.";
+        // No contract error corresponds to this local validation — plain
+        // language only (DESIGN.md: use the contract's OWN error names).
+        return "A piece id is a whole number — 1 or higher.";
       case "out-of-range":
         return err.message; // "UpegIndexOutOfRange — ids run 1 to N."
       case "not-alive":
@@ -136,6 +138,9 @@ export default function Home() {
   const [aliveCount, setAliveCount] = useState<number | null>(null);
   const [tool, setTool] = useState<Tool>("fullbody");
   const [selection, setSelection] = useState<CellRect | null>(null);
+  // X-crop ghost in Full-Body Fit — on by default per DESIGN.md. One state
+  // drives both the panel preview circle and the stage's dashed circle.
+  const [cropGhost, setCropGhost] = useState(true);
   const [loadingRow, setLoadingRow] = useState(0);
   const [wipeKey, setWipeKey] = useState(0);
   const [recents, setRecents] = useState<RecentEntry[]>([]);
@@ -303,6 +308,7 @@ export default function Home() {
             selection={selection}
             onSelectionChange={setSelection}
             wipeKey={wipeKey}
+            cropGhost={cropGhost}
           />
 
           {phase === "error" && errorText !== null && (
@@ -347,7 +353,12 @@ export default function Home() {
 
               {/* both panels stay mounted so settings persist across tabs */}
               <div className={tool === "fullbody" ? "" : "hidden"}>
-                <FullBodyPanel grid={grid} pieceId={pieceId} />
+                <FullBodyPanel
+                  grid={grid}
+                  pieceId={pieceId}
+                  cropGhost={cropGhost}
+                  onCropGhostChange={setCropGhost}
+                />
               </div>
               <div className={tool === "sticker" ? "" : "hidden"}>
                 <StickerPanel

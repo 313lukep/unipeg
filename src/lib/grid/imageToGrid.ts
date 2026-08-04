@@ -67,8 +67,13 @@ const MIN_CELLS = 4;
 const CLUSTER_DISTANCE_MAX = 32; // radius ceiling for very noisy input (the old flat value)
 const CLUSTER_DISTANCE_MIN = 2; // exact samples: fold only near-identical colours
 const CLUSTER_NOISE_FACTOR = 3; // merge radius per unit of measured per-channel noise
-const STRAY_MERGE_DISTANCE = 8; // a cluster this close to a dominant one may be noise...
-const STRAY_COUNT_RATIO = 8; // ...but only when the dominant one is >= 8x larger
+// Stray absorption radius CEILING. Like the merge radius, the effective
+// absorption radius scales with measured sampling noise (see below): with a
+// flat 8px radius, exact samples of genuinely distinct near-shades (e.g. an
+// eye colour #1e1e26 sitting 7.5 from background #1a1c2c — real pieces
+// #386140 / #384444) were absorbed as "noise" and lost on round-trip.
+const STRAY_MERGE_DISTANCE = 8; // radius ceiling for very noisy input
+const STRAY_COUNT_RATIO = 8; // absorb only when the dominant cluster is >= 8x larger
 
 type Lattice = {
   p: number;
@@ -439,7 +444,15 @@ export function imageToGrid(img: ImageDataLike): {
   // Stray absorption: a cluster that is BOTH very close to another AND tiny
   // relative to it is sampling noise (a stray blended cell), not a deliberate
   // second shade — genuinely distinct colours stay distinct however close
-  // their counts, and a small-but-distant cluster is never folded.
+  // their counts, and a small-but-distant cluster is never folded. The
+  // radius scales with the measured sampling noise exactly like the main
+  // merge radius: with exact samples nothing beyond near-identical colours
+  // is ever absorbed, so a tiny distinct feature (a 1–2 cell eye) survives
+  // even when its colour hugs the background.
+  const strayDistance = Math.min(
+    STRAY_MERGE_DISTANCE,
+    Math.max(CLUSTER_DISTANCE_MIN, CLUSTER_NOISE_FACTOR * noise),
+  );
   const absorbedInto = new Map<Cluster, Cluster>();
   const resolve = (c: Cluster): Cluster => {
     let r = c;
@@ -460,7 +473,7 @@ export function imageToGrid(img: ImageDataLike): {
     }
     if (
       best !== null &&
-      bestD <= STRAY_MERGE_DISTANCE &&
+      bestD <= strayDistance &&
       small.count * STRAY_COUNT_RATIO <= best.count
     ) {
       for (const m of small.members) absorb(best, m);

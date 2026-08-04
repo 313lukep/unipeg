@@ -4,11 +4,14 @@
  * CellSlider — cell-tick track, 2-cell square thumb, Space Mono 700 readout
  * in the artwork's units. A visually-hidden native range input drives it, so
  * pointer, touch and keyboard all behave natively and values always snap to
- * `step`. Optional `detents` act as extra magnets: any raw value landing
- * within half a step of a detent snaps onto it.
+ * `step`. Optional `detents` act as extra magnets for pointer drags: any raw
+ * value landing within half a step of a detent snaps onto it. Keyboard input
+ * is exempt from the magnet, so arrow keys step the native lattice
+ * predictably and no lattice value is ever unreachable.
  */
 
-import { useId } from "react";
+import { useId, useRef } from "react";
+import { resolveSliderValue } from "./cellSliderMath";
 
 export type CellSliderProps = {
   label: string;
@@ -38,17 +41,18 @@ export default function CellSlider({
   const clamp = (v: number) => Math.min(max, Math.max(min, v));
   const toPct = (v: number) => (range === 0 ? 0 : ((v - min) / range) * 100);
 
+  // Whether the change about to fire came from the keyboard. Pointer and key
+  // events always precede the change event they cause, so the flag is fresh.
+  const keyboardOrigin = useRef(false);
+
   const handleRaw = (raw: number) => {
-    let v = clamp(raw);
-    if (detents) {
-      for (const d of detents) {
-        if (d >= min && d <= max && Math.abs(v - d) < step / 2 + 1e-9) {
-          v = d;
-          break;
-        }
-      }
-    }
-    onChange(v);
+    onChange(
+      resolveSliderValue(
+        raw,
+        { min, max, step, detents },
+        keyboardOrigin.current ? "keyboard" : "pointer",
+      ),
+    );
   };
 
   // Cell ticks at step increments; thin out when the range is dense.
@@ -111,6 +115,12 @@ export default function CellSlider({
           max={max}
           step={step}
           value={clamp(value)}
+          onKeyDown={() => {
+            keyboardOrigin.current = true;
+          }}
+          onPointerDown={() => {
+            keyboardOrigin.current = false;
+          }}
           onChange={(e) => handleRaw(e.currentTarget.valueAsNumber)}
           aria-label={label}
           aria-valuetext={format(value)}

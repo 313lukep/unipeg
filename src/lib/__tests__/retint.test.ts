@@ -4,6 +4,7 @@ import { makeGrid, recomputePalette, type Grid } from "@/lib/grid";
 import {
   RESTING_CHROMA,
   RESTING_HUE,
+  accentContrast,
   extractPieceTheme,
   hexToOklch,
 } from "@/lib/retint";
@@ -135,5 +136,49 @@ describe("extractPieceTheme", () => {
     const theme = extractPieceTheme(g);
     expect(theme.mono).toBe(true);
     expect(theme.swatches).toEqual([]);
+  });
+});
+
+describe("accentContrast (dev-mode contrast belt)", () => {
+  it("stays at or above AA 4.5:1 across all 360 hues at max chroma, both modes", () => {
+    // DESIGN.md's verified worst cases: 5.83:1 light / 8.76:1 dark — the
+    // lightness pin makes this structural. Assert the AA floor with margin.
+    for (let h = 0; h < 360; h++) {
+      const theme = { h, c: 0.19 };
+      expect(accentContrast(theme, "light")).toBeGreaterThanOrEqual(4.5);
+      expect(accentContrast(theme, "dark")).toBeGreaterThanOrEqual(4.5);
+    }
+  });
+
+  it("matches DESIGN.md's verified worst cases within tolerance", () => {
+    let worstLight = Infinity;
+    let worstDark = Infinity;
+    for (let h = 0; h < 360; h++) {
+      worstLight = Math.min(worstLight, accentContrast({ h, c: 0.19 }, "light"));
+      worstDark = Math.min(worstDark, accentContrast({ h, c: 0.19 }, "dark"));
+    }
+    expect(worstLight).toBeCloseTo(5.83, 0);
+    expect(worstDark).toBeCloseTo(8.76, 0);
+  });
+
+  it("passes for the resting pink theme", () => {
+    const resting = { h: RESTING_HUE, c: RESTING_CHROMA };
+    expect(accentContrast(resting, "light")).toBeGreaterThanOrEqual(4.5);
+    expect(accentContrast(resting, "dark")).toBeGreaterThanOrEqual(4.5);
+  });
+
+  it("caps dark-mode chroma at 0.17 like the CSS formula", () => {
+    // Chroma beyond the cap must not change the dark-mode result.
+    const a = accentContrast({ h: 200, c: 0.17 }, "dark");
+    const b = accentContrast({ h: 200, c: 0.3 }, "dark");
+    expect(b).toBeCloseTo(a, 10);
+  });
+
+  it("returns a sane WCAG ratio (1..21)", () => {
+    for (const mode of ["light", "dark"] as const) {
+      const r = accentContrast({ h: 120, c: 0.1 }, mode);
+      expect(r).toBeGreaterThan(1);
+      expect(r).toBeLessThanOrEqual(21);
+    }
   });
 });

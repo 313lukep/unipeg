@@ -82,6 +82,17 @@ function storageGet(id: number): UpegPiece | undefined {
   }
 }
 
+/** Parse the piece-id index; corrupt or non-array JSON degrades to empty. */
+function readPieceIndex(): number[] {
+  try {
+    const parsed: unknown = JSON.parse(localStorage.getItem(LS_PIECE_INDEX) ?? "[]");
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter((i): i is number => typeof i === "number" && Number.isInteger(i));
+  } catch {
+    return [];
+  }
+}
+
 function storagePut(piece: UpegPiece): void {
   if (typeof localStorage === "undefined") return;
   try {
@@ -91,20 +102,32 @@ function storagePut(piece: UpegPiece): void {
       svg: piece.svg,
       provenance: piece.provenance,
     };
-    localStorage.setItem(LS_PIECE_PREFIX + piece.id, JSON.stringify(stored));
-    const ids: number[] = JSON.parse(localStorage.getItem(LS_PIECE_INDEX) ?? "[]");
+    // Index first, item last: if anything past this point throws, the item
+    // is either indexed (so future evictions still see it) or not written at
+    // all — a corrupt index used to abandon eviction AFTER the item write,
+    // orphaning entries beyond the LS_MAX_PIECES cap forever.
+    const ids = readPieceIndex();
     const next = [piece.id, ...ids.filter((i) => i !== piece.id)];
     for (const evicted of next.slice(LS_MAX_PIECES)) {
       localStorage.removeItem(LS_PIECE_PREFIX + evicted);
     }
     localStorage.setItem(LS_PIECE_INDEX, JSON.stringify(next.slice(0, LS_MAX_PIECES)));
+    localStorage.setItem(LS_PIECE_PREFIX + piece.id, JSON.stringify(stored));
   } catch {
     // Quota/serialisation problems only cost us the cache, never the lookup.
   }
 }
 
 export function validatePieceId(input: string | number): number {
-  const n = typeof input === "number" ? input : Number(String(input).trim().replace(/^#/, ""));
+  let n: number;
+  if (typeof input === "number") {
+    n = input;
+  } else {
+    // Strict decimal: optional leading #, then digits only. Number() alone
+    // accepted scientific notation ("1e3") and hex ("0x10") as valid ids.
+    const s = String(input).trim().replace(/^#/, "");
+    n = /^\d+$/.test(s) ? Number(s) : NaN;
+  }
   if (!Number.isInteger(n) || n < 1) {
     throw new UpegLookupError(
       "invalid-id",

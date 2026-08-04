@@ -74,9 +74,14 @@ function PreviewCard({
 export default function FullBodyPanel({
   grid,
   pieceId,
+  cropGhost,
+  onCropGhostChange,
 }: {
   grid: Grid;
   pieceId: number | null;
+  /** X-crop ghost visibility — one control for panel preview AND stage circle. */
+  cropGhost: boolean;
+  onCropGhostChange: (on: boolean) => void;
 }) {
   const [roomPct, setRoomPct] = useState(DEFAULT_ROOM_PCT);
   const [bgMode, setBgMode] = useState<"auto" | string>("auto");
@@ -241,8 +246,24 @@ export default function FullBodyPanel({
 
   return (
     <section aria-label="Full-Body Fit" className="flex w-full flex-col gap-6">
-      {/* ---- previews: square + circle mask from the SAME render ---- */}
-      <div className="flex flex-col gap-4 sm:flex-row">
+      {/* ---- crop ghost toggle: one control for panel AND stage circle ---- */}
+      <div className="flex items-center justify-between gap-2">
+        <MicroLabel tone="mute">Crop preview</MicroLabel>
+        <Pill
+          variant={cropGhost ? "active" : "card"}
+          aria-pressed={cropGhost}
+          onClick={() => onCropGhostChange(!cropGhost)}
+        >
+          X CROP {cropGhost ? "ON" : "OFF"}
+        </Pill>
+      </div>
+
+      {/* ---- previews: square + circle mask from the SAME render ----
+           Stacked by default, 2-up ONLY in the 640-959px window (the row is
+           bounded, not overridden — Tailwind orders min-[960px] before sm in
+           the cascade), stacked again inside the narrow desktop rail so each
+           preview keeps the full rail width. */}
+      <div className="flex flex-col gap-4 sm:max-[959px]:flex-row">
         <PreviewCard label="Square export">
           <div className="relative aspect-square w-full">
             <canvas
@@ -251,13 +272,17 @@ export default function FullBodyPanel({
               className="h-full w-full [image-rendering:pixelated]"
             />
             {/* X-crop ghost: the inscribed circle of the composed square. */}
-            <span
-              aria-hidden="true"
-              className="pointer-events-none absolute inset-0 rounded-full border border-dashed border-mute"
-            />
-            <span className="pointer-events-none absolute left-1/2 top-0 -translate-x-1/2 -translate-y-1/2 bg-card px-1">
-              <MicroLabel tone="mute">X crop</MicroLabel>
-            </span>
+            {cropGhost && (
+              <>
+                <span
+                  aria-hidden="true"
+                  className="pointer-events-none absolute inset-0 rounded-full border border-dashed border-mute"
+                />
+                <span className="pointer-events-none absolute left-1/2 top-0 -translate-x-1/2 -translate-y-1/2 bg-card px-1">
+                  <MicroLabel tone="mute">X crop</MicroLabel>
+                </span>
+              </>
+            )}
           </div>
         </PreviewCard>
 

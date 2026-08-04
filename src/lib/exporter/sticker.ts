@@ -127,7 +127,7 @@ export function rotatePixelsNearest(
   destH: number,
   cx: number,
   cy: number,
-): Uint8ClampedArray {
+): Uint8ClampedArray<ArrayBuffer> {
   if (src.length !== srcW * srcH * 4) {
     throw new GridValidationError(
       `rotatePixelsNearest: src length ${src.length} does not match ${srcW}x${srcH} RGBA`,
@@ -215,24 +215,42 @@ export function composeStickerCanvas(
   ctx.fillStyle = bgColour;
   ctx.fillRect(0, 0, targetPx, targetPx);
 
-  // Rotate on the destination, centred + nudged. Shadow (when on) rides the
-  // same drawImage — the browser derives it from the rotated sticker's alpha.
-  // shadowOffset* are specified in device space (untouched by the CTM).
+  // Rotate manually with nearest-neighbour inverse mapping, centred + nudged.
+  // ctx.rotate()+drawImage would antialias the rotated edge geometry (verified
+  // in Chromium) even with imageSmoothingEnabled=false, bleeding blend colours
+  // along outline edges — NN copying makes blends impossible by construction.
   const cx = targetPx / 2 + (opts.nudgeX / 100) * targetPx;
   const cy = targetPx / 2 + (opts.nudgeY / 100) * targetPx;
 
-  ctx.save();
+  const offCtx = offscreen.getContext("2d") as CanvasRenderingContext2D | null;
+  if (!offCtx) throw new GridValidationError("composeStickerCanvas: no offscreen 2d context");
+  const srcData = offCtx.getImageData(0, 0, offW, offH).data;
+  const rotated = rotatePixelsNearest(srcData, offW, offH, rad, targetPx, targetPx, cx, cy);
+
+  // Stage the rotated sticker on its own transparent layer so the shadow can
+  // be derived from its alpha and so drawing over the background is a pure
+  // axis-aligned integer drawImage (which adds no edge antialiasing).
+  const layer = document.createElement("canvas");
+  layer.width = targetPx;
+  layer.height = targetPx;
+  const layerCtx = layer.getContext("2d");
+  if (!layerCtx) throw new GridValidationError("composeStickerCanvas: no layer 2d context");
+  layerCtx.putImageData(new ImageData(rotated, targetPx, targetPx), 0, 0);
+
   if (opts.shadow.on && opts.shadow.opacity > 0) {
+    // Shadow pass: the browser derives the (intentionally soft) shadow from
+    // the rotated sticker's alpha. shadowOffset* are in device space.
+    ctx.save();
     ctx.shadowColor = withAlpha(darken(bgColour, SHADOW_DARKEN), opts.shadow.opacity);
     ctx.shadowOffsetX = Math.max(1, Math.round(targetPx * 0.015));
     ctx.shadowOffsetY = Math.max(1, Math.round(targetPx * 0.02));
     ctx.shadowBlur = Math.max(1, Math.round(targetPx * 0.02));
+    ctx.drawImage(layer, 0, 0);
+    ctx.restore();
   }
-  ctx.translate(cx, cy);
-  ctx.rotate(rad);
-  ctx.imageSmoothingEnabled = false;
-  ctx.drawImage(offscreen, -offW / 2, -offH / 2);
-  ctx.restore();
+  // Sticker pass on top, shadow-free: fully opaque pixels replace exactly,
+  // fully transparent pixels leave background/shadow untouched.
+  ctx.drawImage(layer, 0, 0);
 
   return canvas;
 }

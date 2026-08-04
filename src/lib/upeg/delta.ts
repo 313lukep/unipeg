@@ -97,12 +97,18 @@ export async function fetchEventsSince(
   return { events, toBlock };
 }
 
-/** Pure replay: ordered events -> net delta against the baseline. */
+/**
+ * Pure replay: ordered events -> net delta against the baseline.
+ * `pendingAdded` seeds the added set with mints from earlier polls whose
+ * seeds could not be resolved yet (see refreshAliveMap) — burns and transfers
+ * in this batch apply to them like to any freshly-minted id.
+ */
 export function computeAliveDelta(
   events: UpegEvent[],
   toBlock: number,
+  pendingAdded?: ReadonlyMap<string, `0x${string}`>,
 ): AliveDelta {
-  const added = new Map<string, `0x${string}`>();
+  const added = new Map<string, `0x${string}`>(pendingAdded ?? []);
   const removed = new Set<string>();
   for (const ev of events) {
     if (ev.kind === "mint") {
@@ -161,19 +167,35 @@ export type RefreshResult = {
   blockNumber: number;
   addedCount: number;
   removedCount: number;
+  /**
+   * Added ids whose seed could NOT be resolved this round (owner read failed
+   * or the piece moved between the log sweep and the owner read). Feed this
+   * back in as `baseline.pendingAdded` on the next poll so the ids are
+   * retried instead of being dropped forever — the next poll's log window
+   * starts after their mint events.
+   */
+  pendingAdded: Map<string, `0x${string}`>;
 };
 
 /** Baseline + events => current alive map. Pure apart from the injected IO. */
 export async function refreshAliveMap(
-  baseline: { map: AliveMap; blockNumber: number },
+  baseline: {
+    map: AliveMap;
+    blockNumber: number;
+    pendingAdded?: ReadonlyMap<string, `0x${string}`>;
+  },
   client: PublicClient = getChainClient(),
 ): Promise<RefreshResult> {
   const { events, toBlock } = await fetchEventsSince(
     baseline.blockNumber + 1,
     client,
   );
-  const delta = computeAliveDelta(events, toBlock);
+  const delta = computeAliveDelta(events, toBlock, baseline.pendingAdded);
   const seeds = await resolveNewSeeds(delta.added, client);
+  const pendingAdded = new Map<string, `0x${string}`>();
+  for (const [id, owner] of delta.added) {
+    if (!seeds.has(id) && !baseline.map[id]) pendingAdded.set(id, owner);
+  }
   const map: AliveMap = { ...baseline.map };
   let addedCount = 0;
   for (const [id, seed] of seeds) {
@@ -187,5 +209,5 @@ export async function refreshAliveMap(
       removedCount++;
     }
   }
-  return { map, blockNumber: toBlock, addedCount, removedCount };
+  return { map, blockNumber: toBlock, addedCount, removedCount, pendingAdded };
 }

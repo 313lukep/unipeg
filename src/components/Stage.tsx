@@ -40,6 +40,8 @@ export type StageProps = {
   onSelectionChange: (r: CellRect) => void;
   /** bump to replay the column-wipe theatre (one per successful load) */
   wipeKey: number;
+  /** X-crop ghost visibility in fullbody mode (idle always shows it). */
+  cropGhost?: boolean;
 };
 
 const RULER = [0, 6, 12, 18, 23];
@@ -64,6 +66,7 @@ export default function Stage({
   selection,
   onSelectionChange,
   wipeKey,
+  cropGhost = true,
 }: StageProps) {
   const cols = grid?.w ?? 24;
   const rows = grid?.h ?? 24;
@@ -117,7 +120,8 @@ export default function Stage({
   const counterRow = Math.max(0, Math.min(24, loadingRow));
   const counterText = `READING CHAIN — ROW ${String(counterRow).padStart(2, "0")}/24`;
 
-  const showCircle = phase === "idle" || (loaded && mode === "fullbody");
+  const showCircle =
+    phase === "idle" || (loaded && mode === "fullbody" && cropGhost);
   // Inscribed circle as percentages — equal device size on both axes.
   const circleW = (Math.min(cols, rows) / cols) * 100;
   const circleH = (Math.min(cols, rows) / rows) * 100;

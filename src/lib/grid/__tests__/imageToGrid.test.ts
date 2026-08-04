@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { renderToImageData, unipegGrid, PALETTE } from "./helpers";
+import { gridFrom, renderToImageData, unipegGrid, PALETTE } from "./helpers";
 import { imageToGrid } from "../imageToGrid";
 import { gridsEqual, recomputePalette } from "../grid";
 import { hexToRgb } from "../colour";
@@ -231,6 +231,44 @@ describe("imageToGrid", () => {
     expect(grid.palette).toContain("#ff9ad5");
     expect(grid.palette).toContain("#ffb0e0");
     expect(gridsEqual(grid, patched)).toBe(true);
+  });
+
+  it("keeps a tiny near-background feature (2-cell eye) with exact sampling — real pieces #386140/#384444", () => {
+    // Regression (stray-absorption over-merge): the flat 8px stray-absorption
+    // radius folded the 2-cell eye colour #1e1e26 into the background
+    // #1a1c2c (Euclidean distance 7.5, count ratio far beyond 8x) even with
+    // EXACT sampling, so the eye cells were lost on round-trip. The
+    // absorption radius now scales with measured sampling noise like the
+    // main merge radius: zero noise means only near-identical strays fold.
+    const bg = "#1a1c2c";
+    const eye = "#1e1e26";
+    const src = gridFrom(
+      Array.from({ length: 24 }, () => ".".repeat(24)),
+      { ".": bg },
+    );
+    const fill = (x: number, y: number, w: number, h: number, c: string) => {
+      for (let yy = y; yy < y + h; yy++)
+        for (let xx = x; xx < x + w; xx++) src.cells[yy][xx] = c;
+    };
+    fill(4, 10, 12, 8, "#5d275d"); // body
+    fill(14, 5, 6, 6, "#5d275d"); // head
+    fill(12, 4, 2, 7, "#b13e53"); // mane
+    fill(16, 1, 1, 4, "#ffcd75"); // horn
+    fill(5, 18, 2, 4, "#5d275d"); // rear leg
+    fill(11, 18, 2, 4, "#5d275d"); // front leg
+    fill(17, 7, 2, 1, eye); // 2-cell eye, 7.5 from the background colour
+    const patched = recomputePalette(src);
+    for (const cellPx of [5, 10, 17]) {
+      const img = renderToImageData(patched, cellPx, {
+        outW: 24 * cellPx,
+        outH: 24 * cellPx,
+      });
+      const { grid } = imageToGrid(img);
+      expect(grid.w, `cellPx=${cellPx} width`).toBe(24);
+      expect(grid.h, `cellPx=${cellPx} height`).toBe(24);
+      expect(grid.palette, `cellPx=${cellPx} palette`).toContain(eye);
+      expect(gridsEqual(grid, patched), `cellPx=${cellPx} cells`).toBe(true);
+    }
   });
 
   it("keeps a background-coloured margin of on-lattice width as canvas (documented ambiguity)", () => {

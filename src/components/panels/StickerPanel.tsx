@@ -288,8 +288,12 @@ export default function StickerPanel({
       if (typeof ClipboardItem === "undefined" || !navigator.clipboard?.write) {
         throw new Error("clipboard unavailable");
       }
-      const blob = await exportSticker(grid, selection, { ...visualOpts, size: exportSize });
-      await navigator.clipboard.write([new ClipboardItem({ "image/png": blob })]);
+      // Pass the promise straight in — awaiting the export first would let
+      // Safari's user-gesture window expire before clipboard.write runs.
+      const item = new ClipboardItem({
+        "image/png": exportSticker(grid, selection, { ...visualOpts, size: exportSize }),
+      });
+      await navigator.clipboard.write([item]);
       flash(setCopyLabel, "COPIED PNG");
     } catch {
       flash(setCopyLabel, "COPY FAILED");
@@ -414,7 +418,10 @@ export default function StickerPanel({
         </div>
       </section>
 
-      {/* ---- Tilt ------------------------------------------------------ */}
+      {/* ---- Tilt ------------------------------------------------------
+           Detents sit ON the 5-degree lattice (0 / -20) so no value is
+           magnet-trapped; the build-spec default -22 stays reachable as the
+           initial value (keyboard steps re-enter the native lattice). */}
       <section aria-label="Tilt">
         <CellSlider
           label="Tilt"
@@ -422,7 +429,7 @@ export default function StickerPanel({
           min={-45}
           max={45}
           step={5}
-          detents={[0, -22]}
+          detents={[0, -20]}
           onChange={setTilt}
           format={(v) => `TILT ${v} DEG`}
         />

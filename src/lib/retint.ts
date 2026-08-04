@@ -86,6 +86,73 @@ export function hexToOklch(hex: string): Oklch {
 }
 
 /* ------------------------------------------------------------------ */
+/* Contrast belt (dev-mode assert per DESIGN.md)                       */
+/* ------------------------------------------------------------------ */
+
+/** Paper per mode — must match the --paper tokens in globals.css. */
+const PAPER_HEX = { light: "#ffffff", dark: "#0b0b0d" } as const;
+/** Dark-mode accent chroma cap — matches `min(var(--piece-c), 0.17)`. */
+const DARK_ACCENT_CHROMA_CAP = 0.17;
+/** AA floor for normal text. */
+const CONTRAST_FLOOR = 4.5;
+
+/** OKLCH -> linear sRGB (inverse Ottosson matrices), channels clamped to [0,1]. */
+function oklchToLinearRgb({ l, c, h }: Oklch): { r: number; g: number; b: number } {
+  const hr = (h * Math.PI) / 180;
+  const a = c * Math.cos(hr);
+  const b = c * Math.sin(hr);
+
+  const l_ = l + 0.3963377774 * a + 0.2158037573 * b;
+  const m_ = l - 0.1055613458 * a - 0.0638541728 * b;
+  const s_ = l - 0.0894841775 * a - 1.291485548 * b;
+
+  const lm = l_ * l_ * l_;
+  const mm = m_ * m_ * m_;
+  const sm = s_ * s_ * s_;
+
+  const clamp01 = (v: number) => Math.min(1, Math.max(0, v));
+  return {
+    r: clamp01(4.0767416621 * lm - 3.3077115913 * mm + 0.2309699292 * sm),
+    g: clamp01(-1.2684380046 * lm + 2.6097574011 * mm - 0.3413193965 * sm),
+    b: clamp01(-0.0041960863 * lm - 0.7034186147 * mm + 1.707614701 * sm),
+  };
+}
+
+/** WCAG relative luminance from linear-light sRGB channels. */
+function wcagLuminance(rgb: { r: number; g: number; b: number }): number {
+  return 0.2126 * rgb.r + 0.7152 * rgb.g + 0.0722 * rgb.b;
+}
+
+function hexLuminance(hex: string): number {
+  const { r, g, b } = parseHex(hex);
+  return wcagLuminance({
+    r: srgbToLinear(r),
+    g: srgbToLinear(g),
+    b: srgbToLinear(b),
+  });
+}
+
+/**
+ * WCAG contrast ratio of the accent the CSS formulas would actually apply
+ * (`oklch(0.45 c h)` light, `oklch(0.80 min(c, 0.17) h)` dark) against that
+ * mode's paper. Pure — safe to unit-test; used by the dev-mode belt below.
+ */
+export function accentContrast(
+  theme: Pick<PieceTheme, "h" | "c">,
+  mode: "light" | "dark",
+): number {
+  const accent: Oklch =
+    mode === "light"
+      ? { l: 0.45, c: theme.c, h: theme.h }
+      : { l: 0.8, c: Math.min(theme.c, DARK_ACCENT_CHROMA_CAP), h: theme.h };
+  const a = wcagLuminance(oklchToLinearRgb(accent));
+  const p = hexLuminance(PAPER_HEX[mode]);
+  const hi = Math.max(a, p);
+  const lo = Math.min(a, p);
+  return (hi + 0.05) / (lo + 0.05);
+}
+
+/* ------------------------------------------------------------------ */
 /* Theme extraction                                                    */
 /* ------------------------------------------------------------------ */
 
@@ -165,6 +232,20 @@ export function applyPieceTheme(theme: PieceTheme): void {
   const style = document.documentElement.style;
   style.setProperty("--piece-h", String(theme.h));
   style.setProperty("--piece-c", String(theme.c));
+
+  // Dev-mode belt (DESIGN.md accessibility): the lightness pin makes contrast
+  // structural, but re-check the computed accent-vs-paper ratio anyway.
+  if (process.env.NODE_ENV !== "production") {
+    for (const mode of ["light", "dark"] as const) {
+      const ratio = accentContrast(theme, mode);
+      if (ratio < CONTRAST_FLOOR) {
+        console.warn(
+          `retint: accent vs paper contrast ${ratio.toFixed(2)}:1 (${mode}) ` +
+            `is below ${CONTRAST_FLOOR}:1 for h=${theme.h} c=${theme.c}`,
+        );
+      }
+    }
+  }
 }
 
 /** Remove the overrides so the registered initial values (resting pink) win. */

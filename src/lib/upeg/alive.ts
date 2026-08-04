@@ -1,4 +1,4 @@
-import { refreshAliveMap } from "./delta";
+import { refreshAliveMap, type RefreshResult } from "./delta";
 import { UpegLookupError } from "./types";
 import type { AliveMap } from "./resolve";
 
@@ -34,6 +34,10 @@ let state: AliveState | undefined;
 let baselinePromise: Promise<AliveState> | undefined;
 let refreshing: Promise<AliveState> | undefined;
 let timer: ReturnType<typeof setTimeout> | undefined;
+/** True while startAlivePolling's shared loop should keep re-arming. */
+let polling = false;
+/** Unresolved new-mint ids carried between delta polls (see delta.ts). */
+let pendingAdded: RefreshResult["pendingAdded"] = new Map();
 const listeners = new Set<Listener>();
 
 async function fetchJson<T>(url: string): Promise<T> {
@@ -88,7 +92,12 @@ function emit() {
 async function runDelta(): Promise<AliveState> {
   const base = state ?? (await ensureBaseline());
   if (!base.blockNumber) return base; // no block stamp -> nothing to replay from
-  const result = await refreshAliveMap({ map: base.map, blockNumber: base.blockNumber });
+  const result = await refreshAliveMap({
+    map: base.map,
+    blockNumber: base.blockNumber,
+    pendingAdded,
+  });
+  pendingAdded = result.pendingAdded; // retry unresolved new mints next poll
   state = {
     map: result.map,
     blockNumber: result.blockNumber,
@@ -119,18 +128,29 @@ function ensureBaseline(): Promise<AliveState> {
  * Current alive map, freshened by an event delta when possible. Chain being
  * unreachable degrades to the baseline silently — lookups still work, the
  * UI just shows the snapshot vintage instead of LIVE.
+ *
+ * Once the baseline is loaded this resolves IMMEDIATELY with the best state
+ * we have; a stale state kicks the delta refresh off in the BACKGROUND and
+ * listeners hear about it when it lands. (Awaiting the delta here used to
+ * stall the user's first lookup behind ~48s of RPC transport timeouts when
+ * the chain was unreachable.) Pass `awaitFresh: true` to explicitly wait for
+ * the in-flight refresh instead — it still degrades to the baseline on
+ * failure, never rejects because of the chain.
  */
-export async function getAliveState(): Promise<AliveState> {
+export async function getAliveState(opts?: { awaitFresh?: boolean }): Promise<AliveState> {
   const base = await ensureBaseline();
-  if (base.live && Date.now() - base.refreshedAt < POLL_MS) return base;
+  const current = state ?? base;
+  if (current.live && Date.now() - current.refreshedAt < POLL_MS) return current;
   if (!refreshing) {
+    // The .catch converts failure to the baseline, so this promise never
+    // rejects — leaving it un-awaited in the background is safe.
     refreshing = runDelta()
-      .catch(() => base)
+      .catch(() => state ?? current)
       .finally(() => {
         refreshing = undefined;
       });
   }
-  return refreshing;
+  return opts?.awaitFresh ? refreshing : current;
 }
 
 export async function getAliveMap(): Promise<AliveMap> {
@@ -144,20 +164,26 @@ export function startAlivePolling(onChange?: Listener): () => void {
     const delay = POLL_MS + Math.random() * JITTER_MS;
     timer = setTimeout(async () => {
       if (typeof document === "undefined" || document.visibilityState === "visible") {
-        await getAliveState().catch(() => undefined);
+        await getAliveState({ awaitFresh: true }).catch(() => undefined);
       }
-      schedule();
+      // stop() during the in-flight refresh above must win: without this
+      // check the loop re-armed itself forever with zero listeners.
+      if (polling) schedule();
     }, delay);
   };
-  if (!timer) {
+  if (!polling) {
+    polling = true;
     void getAliveState().catch(() => undefined);
     schedule();
   }
   return () => {
     if (onChange) listeners.delete(onChange);
-    if (listeners.size === 0 && timer) {
-      clearTimeout(timer);
-      timer = undefined;
+    if (listeners.size === 0) {
+      polling = false;
+      if (timer) {
+        clearTimeout(timer);
+        timer = undefined;
+      }
     }
   };
 }
@@ -169,5 +195,7 @@ export function __resetAliveStore(): void {
   refreshing = undefined;
   if (timer) clearTimeout(timer);
   timer = undefined;
+  polling = false;
+  pendingAdded = new Map();
   listeners.clear();
 }
