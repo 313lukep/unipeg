@@ -25,6 +25,15 @@ demands it — prefer `unipegPFP` verbatim.)
 - Error copy uses the contract's own error names in mono, e.g.
   `UpegIndexOutOfRange — ids run 1 to 388199`.
 
+## Owner amendments (2026-08-04 — override anything conflicting below)
+
+- **Full-Body Fit**: the added pixels extend the piece's **own current background
+  colour** (detected). The colour override/swatch row stays as a secondary control.
+- **Head Sticker background**: exactly **three options** — **BLACK** (`#000000`),
+  **WHITE** (`#FFFFFF`), or **PIECE BG** (the piece's existing background colour).
+  Default BLACK. The derived complement-tint idea is dropped from the UI (the
+  exporter may keep the capability internally).
+
 ## Tokens (CSS custom properties on `:root`, `[data-theme=dark]` overrides)
 
 | token | light | dark | role |
