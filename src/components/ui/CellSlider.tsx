@@ -127,14 +127,17 @@ export default function CellSlider({
           className="u-slider-input absolute inset-0 h-full w-full cursor-pointer opacity-0"
         />
 
-        {/* 2-cell square thumb; travels 0 → (100% − its own width) */}
+        {/* thumb: a pink circle (owner's call — always --pink, never the
+            piece accent), ringed in paper so it reads on the track */}
         <span
           aria-hidden="true"
-          className="u-slider-thumb pointer-events-none absolute top-1/2 -translate-y-1/2 bg-accent"
+          className="u-slider-thumb pointer-events-none absolute top-1/2 -translate-y-1/2 rounded-full"
           style={{
-            width: "calc(var(--cell) * 2)",
-            height: "calc(var(--cell) * 2)",
-            left: `calc(${fraction} * (100% - var(--cell) * 2))`,
+            width: "22px",
+            height: "22px",
+            background: "var(--pink)",
+            boxShadow: "0 0 0 2px var(--paper)",
+            left: `calc(${fraction} * (100% - 22px))`,
           }}
         />
       </div>

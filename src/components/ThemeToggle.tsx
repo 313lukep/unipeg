@@ -1,11 +1,12 @@
 "use client";
 
 /**
- * Theme toggle: a 2×2 pixel glyph (two ink cells, two paper cells) that
- * rotates 90° on toggle (instant under reduced motion — the global
- * kill-switch removes the transition). Persists 'unipegpfp.theme' to
- * localStorage and sets data-theme on <html>. Initial value was already
- * applied before paint by the inline script in layout.tsx.
+ * Theme toggle: a chunky pixel-art sun / moon (owner's call — clearly
+ * identifiable day/night control, drawn on the same grid language as the
+ * art). Shows the mode a tap switches TO: light mode shows a moon, dark
+ * mode shows a sun. Persists 'unipegpfp.theme' to localStorage and sets
+ * data-theme on <html>. Initial value was already applied before paint by
+ * the inline script in layout.tsx.
  */
 
 import { useEffect, useState } from "react";
@@ -14,9 +15,55 @@ const STORAGE_KEY = "unipegpfp.theme";
 
 type Theme = "light" | "dark";
 
+/** 9×9 pixel-art glyphs; 1 = filled with --ink. */
+const SUN: number[][] = [
+  [0, 0, 0, 0, 1, 0, 0, 0, 0],
+  [0, 1, 0, 0, 1, 0, 0, 1, 0],
+  [0, 0, 0, 1, 1, 1, 0, 0, 0],
+  [0, 0, 1, 1, 1, 1, 1, 0, 0],
+  [1, 1, 1, 1, 1, 1, 1, 1, 1],
+  [0, 0, 1, 1, 1, 1, 1, 0, 0],
+  [0, 0, 0, 1, 1, 1, 0, 0, 0],
+  [0, 1, 0, 0, 1, 0, 0, 1, 0],
+  [0, 0, 0, 0, 1, 0, 0, 0, 0],
+];
+
+const MOON: number[][] = [
+  [0, 0, 0, 1, 1, 1, 0, 0, 0],
+  [0, 0, 1, 1, 1, 0, 0, 0, 0],
+  [0, 1, 1, 1, 0, 0, 0, 0, 0],
+  [1, 1, 1, 0, 0, 0, 0, 0, 0],
+  [1, 1, 1, 0, 0, 0, 0, 0, 0],
+  [1, 1, 1, 0, 0, 0, 0, 0, 0],
+  [0, 1, 1, 1, 0, 0, 0, 0, 1],
+  [0, 0, 1, 1, 1, 1, 0, 1, 1],
+  [0, 0, 0, 1, 1, 1, 1, 1, 1],
+];
+
+function PixelGlyph({ rows }: { rows: number[][] }) {
+  return (
+    <span
+      aria-hidden="true"
+      className="grid h-[32px] w-[32px]"
+      style={{
+        gridTemplateColumns: `repeat(${rows[0].length}, 1fr)`,
+        gridTemplateRows: `repeat(${rows.length}, 1fr)`,
+      }}
+    >
+      {rows.flatMap((row, y) =>
+        row.map((on, x) => (
+          <span
+            key={`${x}-${y}`}
+            style={on ? { backgroundColor: "var(--ink)" } : undefined}
+          />
+        )),
+      )}
+    </span>
+  );
+}
+
 export default function ThemeToggle() {
   const [theme, setTheme] = useState<Theme | null>(null);
-  const [quarterTurns, setQuarterTurns] = useState(0);
 
   useEffect(() => {
     const current = document.documentElement.getAttribute("data-theme");
@@ -29,7 +76,6 @@ export default function ThemeToggle() {
   const toggle = () => {
     const next: Theme = theme === "dark" ? "light" : "dark";
     setTheme(next);
-    setQuarterTurns((t) => t + 1);
     document.documentElement.setAttribute("data-theme", next);
     try {
       localStorage.setItem(STORAGE_KEY, next);
@@ -37,12 +83,6 @@ export default function ThemeToggle() {
       /* private mode etc. — theme still applies for this visit */
     }
   };
-
-  const cellOn = { backgroundColor: "var(--ink)" } as const;
-  const cellOff = {
-    backgroundColor: "var(--paper)",
-    boxShadow: "inset 0 0 0 1px var(--line)",
-  } as const;
 
   return (
     <button
@@ -53,16 +93,9 @@ export default function ThemeToggle() {
       }
       className="u-focus-square inline-flex h-[var(--control-h)] min-h-[44px] w-[var(--control-h)] min-w-[44px] cursor-pointer items-center justify-center"
     >
-      <span
-        aria-hidden="true"
-        className="grid h-[14px] w-[14px] grid-cols-2 grid-rows-2 transition-transform duration-200"
-        style={{ transform: `rotate(${quarterTurns * 90}deg)` }}
-      >
-        <span style={cellOn} />
-        <span style={cellOff} />
-        <span style={cellOff} />
-        <span style={cellOn} />
-      </span>
+      {/* show the mode a tap switches TO; pre-hydration shows the moon so
+          the button is never empty (light is the SSR default) */}
+      <PixelGlyph rows={theme === "dark" ? SUN : MOON} />
     </button>
   );
 }

@@ -43,6 +43,21 @@ type ExportSize = 400 | 1000 | 2000;
 const LOW_RES_PX = 240;
 const DEBOUNCE_MS = 80;
 
+/**
+ * Format the outline width (fractional cells, quarter-cell steps) in the
+ * art's units: 0 -> NONE, 0.5 -> 1/2 CELL, 1 -> 1 CELL, 1.25 -> 1 1/4 CELL.
+ */
+function formatOutlineCells(v: number): string {
+  if (v <= 0) return "NONE";
+  const whole = Math.floor(v);
+  const quarters = Math.round((v - whole) * 4);
+  const frac = ["", "1/4", "1/2", "3/4"][quarters];
+  const num = [whole > 0 ? String(whole) : null, frac || null]
+    .filter(Boolean)
+    .join(" ");
+  return `${num} CELL`;
+}
+
 /** Track an element's content width (0 until measured; SSR-safe). */
 function useElementWidth<T extends HTMLElement>(): [React.RefObject<T | null>, number] {
   const ref = useRef<T | null>(null);
@@ -101,7 +116,8 @@ export default function StickerPanel({
   onSelectionChange,
 }: StickerPanelProps) {
   // ---- controls state (defaults per spec) --------------------------------
-  const [outlineWidth, setOutlineWidth] = useState<0 | 1 | 2 | 3>(1);
+  // Outline is fractional cells (0..1.5 in 1/4-cell steps); owner default 1/2.
+  const [outlineWidth, setOutlineWidth] = useState(0.5);
   const [outlineColour, setOutlineColour] = useState("#ffffff");
   const [twoTone, setTwoTone] = useState(false);
   const [tilt, setTilt] = useState(-22);
@@ -392,10 +408,10 @@ export default function StickerPanel({
           label="Outline"
           value={outlineWidth}
           min={0}
-          max={3}
-          step={1}
-          onChange={(v) => setOutlineWidth(Math.round(v) as 0 | 1 | 2 | 3)}
-          format={(v) => `${v} ${v === 1 ? "CELL" : "CELLS"}`}
+          max={1.5}
+          step={0.25}
+          onChange={(v) => setOutlineWidth(Math.round(v * 4) / 4)}
+          format={formatOutlineCells}
         />
         <div className="flex flex-wrap items-center gap-0">
           {outlineColours.map((c) => (

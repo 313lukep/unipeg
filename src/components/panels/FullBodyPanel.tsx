@@ -32,6 +32,15 @@ import Pill from "@/components/ui/Pill";
 import CellSlider from "@/components/ui/CellSlider";
 
 const SIZES: FullBodySize[] = [400, 1000, 2000];
+
+/** Owner amendment: exactly three background options, same as the sticker.
+ *  AUTO = the piece's own detected background (exporter opts bg: undefined). */
+type FullBodyBgMode = "auto" | "black" | "white";
+const BG_PILLS: { mode: FullBodyBgMode; label: string }[] = [
+  { mode: "auto", label: "AUTO" },
+  { mode: "black", label: "BLACK" },
+  { mode: "white", label: "WHITE" },
+];
 const DEFAULT_ROOM_PCT = 12;
 const FULL_RES_TARGET_PX = 480;
 const LOW_RES_TARGET_PX = 120;
@@ -84,7 +93,7 @@ export default function FullBodyPanel({
   onCropGhostChange: (on: boolean) => void;
 }) {
   const [roomPct, setRoomPct] = useState(DEFAULT_ROOM_PCT);
-  const [bgMode, setBgMode] = useState<"auto" | string>("auto");
+  const [bgMode, setBgMode] = useState<FullBodyBgMode>("auto");
   const [size, setSize] = useState<FullBodySize>(1000);
   const [busy, setBusy] = useState(false);
   const [savedLabel, setSavedLabel] = useState<string | null>(null);
@@ -125,7 +134,10 @@ export default function FullBodyPanel({
     }
   }, [grid]);
 
-  const effectiveBg = bgMode === "auto" ? detectedBg : bgMode;
+  // AUTO plumbs through as bg: undefined — the exporter detects for itself.
+  const bgOverride =
+    bgMode === "black" ? "#000000" : bgMode === "white" ? "#ffffff" : undefined;
+  const effectiveBg = bgOverride ?? detectedBg;
 
   // Pure pre-flight validation (no canvas) so the render effect never has to
   // set error state — errors are derived, effects only draw.
@@ -143,11 +155,11 @@ export default function FullBodyPanel({
 
   const drawPreviews = useCallback(
     (targetPx: number) => {
-      if (compositionError !== null || effectiveBg === null) return;
+      if (compositionError !== null) return;
       try {
         const { canvas } = composeFullBodyPreview(grid, {
           breathingRoom: roomPct / 100,
-          bg: effectiveBg,
+          bg: bgOverride,
           targetPx,
         });
         blit(canvas, squareRef.current);
@@ -156,7 +168,7 @@ export default function FullBodyPanel({
         /* pre-flight covers the known failure modes; never loop on state */
       }
     },
-    [grid, roomPct, effectiveBg, compositionError],
+    [grid, roomPct, bgOverride, compositionError],
   );
 
   // Low-res immediately on any input change (feels live while dragging),
@@ -179,10 +191,10 @@ export default function FullBodyPanel({
   const exportOpts = useCallback(
     () => ({
       breathingRoom: roomPct / 100,
-      bg: effectiveBg ?? undefined,
+      bg: bgOverride,
       size,
     }),
-    [roomPct, effectiveBg, size],
+    [roomPct, bgOverride, size],
   );
 
   const handleDownload = async () => {
@@ -319,13 +331,16 @@ export default function FullBodyPanel({
       <div className="flex flex-col gap-2">
         <MicroLabel tone="mute">Background</MicroLabel>
         <div className="flex flex-wrap items-center gap-2">
-          <Pill
-            variant={bgMode === "auto" ? "active" : "card"}
-            aria-pressed={bgMode === "auto"}
-            onClick={() => setBgMode("auto")}
-          >
-            AUTO
-          </Pill>
+          {BG_PILLS.map(({ mode, label }) => (
+            <Pill
+              key={mode}
+              variant={bgMode === mode ? "active" : "card"}
+              aria-pressed={bgMode === mode}
+              onClick={() => setBgMode(mode)}
+            >
+              {label}
+            </Pill>
+          ))}
           {detectedBg !== null && (
             <button
               type="button"
@@ -343,20 +358,6 @@ export default function FullBodyPanel({
               {detectedBg.toUpperCase()}
             </button>
           )}
-          {/* literal-pixel swatches from the piece palette */}
-          {grid.palette.map((hex) => (
-            <button
-              key={hex}
-              type="button"
-              onClick={() => setBgMode(hex)}
-              aria-label={`Background ${hex}`}
-              aria-pressed={bgMode === hex}
-              className={`h-[var(--control-h)] min-h-[44px] w-[var(--control-h)] min-w-[44px] cursor-pointer border-2 ${
-                bgMode === hex ? "border-accent" : "border-line"
-              }`}
-              style={{ backgroundColor: hex }}
-            />
-          ))}
         </div>
       </div>
 

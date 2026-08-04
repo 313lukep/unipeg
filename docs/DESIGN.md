@@ -28,11 +28,21 @@ demands it — prefer `unipegPFP` verbatim.)
 ## Owner amendments (2026-08-04 — override anything conflicting below)
 
 - **Full-Body Fit**: the added pixels extend the piece's **own current background
-  colour** (detected). The colour override/swatch row stays as a secondary control.
+  colour** (detected).
+- **Full-Body background** (same-day refinement — supersedes the earlier "swatch row
+  stays" note): exactly **three options**, mirroring the sticker — **AUTO** (the
+  piece's detected background; the default, its hex shown with tap-to-copy),
+  **BLACK** (`#000000`), **WHITE** (`#FFFFFF`). The palette swatch row is
+  **removed**. AUTO plumbs through the exporter opts as `bg: undefined`.
 - **Head Sticker background**: exactly **three options** — **BLACK** (`#000000`),
   **WHITE** (`#FFFFFF`), or **PIECE BG** (the piece's existing background colour).
   Default BLACK. The derived complement-tint idea is dropped from the UI (the
   exporter may keep the capability internally).
+- **Sticker outline is fractional cells**: 0–1.5 in 1/4-cell steps, **default 1/2
+  cell** (the owner judged 1 cell too thick against the reference). Readout in the
+  art's units: `NONE`, `1/2 CELL`, `1 CELL`, `1 1/4 CELL`.
+- **Sticker size-in-frame is tilt-invariant**: changing Tilt never changes how large
+  the sticker reads in the frame; Size in frame alone controls that.
 
 ## Tokens (CSS custom properties on `:root`, `[data-theme=dark]` overrides)
 
