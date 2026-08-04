@@ -18,7 +18,7 @@ type LayerName =
 
 type LayerRects = { variant: number; rects: [number, number, number, number][] };
 
-const LAYERS = layersData.layers as Record<LayerName, LayerRects[]>;
+const LAYERS = layersData.layers as unknown as Record<LayerName, LayerRects[]>;
 
 function rect(x: number, y: number, w: number, h: number, fill: string): string {
   return `<rect x='${x}' y='${y}' width='${w}' height='${h}' fill='${fill}'/>`;
