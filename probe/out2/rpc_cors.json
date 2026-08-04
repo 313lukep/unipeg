@@ -1,0 +1,56 @@
+[
+  {
+    "url": "https://ethereum-rpc.publicnode.com",
+    "preflightStatus": 204,
+    "preflightACAO": "*",
+    "postStatus": 200,
+    "postACAO": "*",
+    "chainId": "0x1",
+    "latencyMs": 151,
+    "corsPermissive": true
+  },
+  {
+    "url": "https://eth.drpc.org",
+    "preflightStatus": 204,
+    "preflightACAO": "https://example.com",
+    "postStatus": 200,
+    "postACAO": "*",
+    "chainId": "0x1",
+    "latencyMs": 150,
+    "corsPermissive": true
+  },
+  {
+    "url": "https://eth.llamarpc.com",
+    "preflightStatus": 403,
+    "preflightACAO": null,
+    "postStatus": 403,
+    "postACAO": null,
+    "error": "SyntaxError: Unexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+    "corsPermissive": false
+  },
+  {
+    "url": "https://1rpc.io/eth",
+    "error": "TimeoutError: The operation was aborted due to timeout",
+    "corsPermissive": false
+  },
+  {
+    "url": "https://eth-mainnet.public.blastapi.io",
+    "preflightStatus": 200,
+    "preflightACAO": "https://example.com",
+    "postStatus": 200,
+    "postACAO": "https://example.com",
+    "chainId": "0x1",
+    "latencyMs": 249,
+    "corsPermissive": true
+  },
+  {
+    "url": "https://eth.merkle.io",
+    "preflightStatus": 405,
+    "preflightACAO": null,
+    "postStatus": 200,
+    "postACAO": "*",
+    "chainId": "0x1",
+    "latencyMs": 327,
+    "corsPermissive": false
+  }
+]
