@@ -1,9 +1,11 @@
 {
-  "snapshotAt": "2026-08-04T13:33:00Z",
-  "method": "full holder scan: Holder(i) x HoldersCount, OwnerUpegsPage per holder, via ethereum-rpc.publicnode.com",
+  "blockNumber": 25682003,
+  "scannedAt": "2026-08-04T14:04:05.884Z",
   "holdersCount": 1441,
-  "aliveCount": 6922,
-  "everMinted": 388199,
+  "failures": 0,
+  "aliveCount": 6913,
+  "everMinted": 388232,
   "idMin": 28,
-  "idMax": 388199
+  "idMax": 388232,
+  "method": "full holder scan (Holder x HoldersCount, OwnerUpegsPage), block-stamped before scan"
 }
