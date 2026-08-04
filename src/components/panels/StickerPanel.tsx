@@ -36,7 +36,8 @@ export type StickerPanelProps = {
   onSelectionChange: (r: CellRect) => void;
 };
 
-type BgMode = "tint" | "piece-bg" | "solid";
+/** Owner amendment: exactly three background options. */
+type BgMode = "black" | "white" | "piece-bg";
 type ExportSize = 400 | 1000 | 2000;
 
 const LOW_RES_PX = 240;
@@ -104,8 +105,7 @@ export default function StickerPanel({
   const [outlineColour, setOutlineColour] = useState("#ffffff");
   const [twoTone, setTwoTone] = useState(false);
   const [tilt, setTilt] = useState(-22);
-  const [bgMode, setBgMode] = useState<BgMode>("tint");
-  const [solidColour, setSolidColour] = useState<string | null>(null);
+  const [bgMode, setBgMode] = useState<BgMode>("black");
   const [shadowOn, setShadowOn] = useState(true);
   const [shadowStrength, setShadowStrength] = useState(35); // percent
   const [sizeInFrame, setSizeInFrame] = useState(78); // percent
@@ -179,9 +179,12 @@ export default function StickerPanel({
       twoTone,
       rotationDeg: tilt,
       background:
-        bgMode === "solid"
-          ? { mode: "solid" as const, colour: solidColour ?? "#ffffff" }
-          : { mode: bgMode },
+        bgMode === "piece-bg"
+          ? { mode: "piece-bg" as const }
+          : {
+              mode: "solid" as const,
+              colour: bgMode === "black" ? "#000000" : "#ffffff",
+            },
       shadow: { on: shadowOn, opacity: shadowStrength / 100 },
       scale: sizeInFrame / 100,
       nudgeX,
@@ -194,7 +197,6 @@ export default function StickerPanel({
       twoTone,
       tilt,
       bgMode,
-      solidColour,
       shadowOn,
       shadowStrength,
       sizeInFrame,
@@ -309,7 +311,6 @@ export default function StickerPanel({
     return out.slice(0, 8);
   }, [grid.palette]);
 
-  const solidColours = useMemo(() => grid.palette.slice(0, 8), [grid.palette]);
 
   return (
     <div
@@ -432,11 +433,18 @@ export default function StickerPanel({
         <span className="text-[13px] font-semibold text-ink">Background</span>
         <div className="flex flex-wrap items-center gap-2">
           <Pill
-            variant={bgMode === "tint" ? "active" : "card"}
-            aria-pressed={bgMode === "tint"}
-            onClick={() => setBgMode("tint")}
+            variant={bgMode === "black" ? "active" : "card"}
+            aria-pressed={bgMode === "black"}
+            onClick={() => setBgMode("black")}
           >
-            AUTO TINT
+            BLACK
+          </Pill>
+          <Pill
+            variant={bgMode === "white" ? "active" : "card"}
+            aria-pressed={bgMode === "white"}
+            onClick={() => setBgMode("white")}
+          >
+            WHITE
           </Pill>
           <Pill
             variant={bgMode === "piece-bg" ? "active" : "card"}
@@ -445,20 +453,6 @@ export default function StickerPanel({
           >
             PIECE BG
           </Pill>
-        </div>
-        <div className="flex flex-wrap items-center gap-0">
-          {solidColours.map((c) => (
-            <Swatch
-              key={c}
-              colour={c}
-              selected={bgMode === "solid" && solidColour === c}
-              onSelect={() => {
-                setBgMode("solid");
-                setSolidColour(c);
-              }}
-              label={`Solid background ${c}`}
-            />
-          ))}
         </div>
       </section>
 

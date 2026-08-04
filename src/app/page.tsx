@@ -29,6 +29,7 @@ import { detectHeadSeed, svgToGrid, GridValidationError } from "@/lib/grid";
 import type { CellRect, Grid } from "@/lib/grid";
 import {
   resolvePiece,
+  startAlivePolling,
   UpegLookupError,
   type UpegMetadata,
   type UpegPiece,
@@ -142,22 +143,13 @@ export default function Home() {
   const loadSeq = useRef(0);
   const rowTimer = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  // Registry line: alive count from the bundled snapshot metadata.
+  // Registry line: live alive count. The alive store loads the bundled
+  // snapshot, patches it with an on-chain mint/burn event delta, and keeps
+  // polling (~2 min, jittered, only while the tab is visible) — the
+  // collection churns constantly, so the count and lookups stay current.
   useEffect(() => {
-    let cancelled = false;
-    fetch("/data/upeg-alive.meta.json")
-      .then((r) => (r.ok ? r.json() : null))
-      .then((meta: { aliveCount?: number } | null) => {
-        if (!cancelled && meta && typeof meta.aliveCount === "number") {
-          setAliveCount(meta.aliveCount);
-        }
-      })
-      .catch(() => {
-        /* the registry line simply omits the segment */
-      });
-    return () => {
-      cancelled = true;
-    };
+    const stop = startAlivePolling((s) => setAliveCount(s.aliveCount));
+    return stop;
   }, []);
 
   // Recents from localStorage — post-hydration sync from an external store.
