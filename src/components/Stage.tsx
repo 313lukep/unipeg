@@ -44,7 +44,6 @@ export type StageProps = {
   cropGhost?: boolean;
 };
 
-const RULER = [0, 6, 12, 18, 23];
 
 function useReducedMotion(): boolean {
   const [reduced, setReduced] = useState(false);
@@ -134,19 +133,6 @@ export default function Stage({
         className="flex flex-col"
         style={measured ? { width: cellPx * cols } : { width: "100%" }}
       >
-        {/* ruler numerals along the top edge */}
-        <div className="relative h-[16px]" aria-hidden="true">
-          {RULER.filter((n) => n < cols).map((n) => (
-            <span
-              key={n}
-              className="absolute bottom-[2px] font-mono text-[10px] leading-none text-mute"
-              style={{ left: `calc(${pct(n, cols)} + 1px)` }}
-            >
-              {n}
-            </span>
-          ))}
-        </div>
-
         {/* the plate */}
         <div
           className="relative"
@@ -269,17 +255,6 @@ export default function Stage({
           )}
         </div>
 
-        {/* museum scale bar */}
-        <div
-          aria-hidden="true"
-          className="mt-2 flex items-center gap-2 font-mono text-[10px] leading-none text-mute"
-        >
-          <span>|</span>
-          <span className="h-px w-8 bg-mute" />
-          <span>{cols} px</span>
-          <span className="h-px w-8 bg-mute" />
-          <span>|</span>
-        </div>
       </div>
     </div>
   );
