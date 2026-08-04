@@ -11,7 +11,7 @@
  *           padded by the dilation radius per side first so nothing clips.
  *           Implemented as a separable two-pass over the binary alpha mask —
  *           hard-edged, zero blur, zero antialiasing by construction.
- *        [-> optional second darker band (two-tone) at outer radius
+ *        [-> optional second opposite-colour band (two-tone) at outer radius
  *            round(outlineWidth * cellPx) + round(0.25 * cellPx)]
  *        -> THEN rotate (rotation AFTER upscale) via a manual nearest-
  *           neighbour inverse mapping — NOT ctx.rotate()+drawImage, which
@@ -49,10 +49,14 @@ export type StickerOpts = {
    * the default.
    */
   outlineWidth: number;
-  /** hex colour of the outline (white default in the UI) */
+  /**
+   * outline colour — WHITE (#ffffff) or BLACK (#000000) only; anything else
+   * is defensively normalised to white
+   */
   outlineColour: string;
   /**
-   * adds a second darker band outside the outline, outer radius
+   * adds a second band in the OPPOSITE colour outside the outline (white
+   * outline -> black band, black outline -> white band), outer radius
    * round(outlineWidth * cellPx) + round(0.25 * cellPx) device pixels
    */
   twoTone: boolean;
@@ -79,8 +83,27 @@ export type StickerOpts = {
   size: 400 | 1000 | 2000;
 };
 
-/** darken() amount for the optional second (two-tone) outline band */
-export const TWO_TONE_DARKEN = 0.4;
+/** the only two legal outline colours (owner rule) */
+export const OUTLINE_WHITE = "#ffffff";
+export const OUTLINE_BLACK = "#000000";
+
+/**
+ * Defensive normalisation of StickerOpts.outlineColour: outlines are WHITE
+ * (#ffffff) or BLACK (#000000) only; anything else falls back to white.
+ */
+export function normaliseOutlineColour(colour: string): string {
+  const c = typeof colour === "string" ? colour.trim().toLowerCase() : "";
+  return c === OUTLINE_BLACK || c === "#000" ? OUTLINE_BLACK : OUTLINE_WHITE;
+}
+
+/**
+ * Two-tone outer band colour: exactly the OPPOSITE of the (normalised)
+ * outline colour — white outline gets a black band, black gets white.
+ */
+export function twoToneBandColour(outlineColour: string): string {
+  return normaliseOutlineColour(outlineColour) === OUTLINE_WHITE ? OUTLINE_BLACK : OUTLINE_WHITE;
+}
+
 /** darken() amount for the shadow colour, per spec: darken(bgColour, 0.4) */
 const SHADOW_DARKEN = 0.4;
 
@@ -371,6 +394,7 @@ export function renderStickerLayer(
   }
   const sticker = buildStickerGrid(grid, sel);
   const ow = normaliseOutlineWidth(opts.outlineWidth);
+  const outlineColour = normaliseOutlineColour(opts.outlineColour);
   const twoTone = opts.twoTone && ow > 0;
 
   // cellPx from the UNROTATED outlined extent: largest integer cell size
@@ -401,9 +425,9 @@ export function renderStickerLayer(
           rasterW,
           rasterH,
           outlinePx,
-          opts.outlineColour,
+          outlineColour,
           bandPx,
-          twoTone ? darken(opts.outlineColour, TWO_TONE_DARKEN) : undefined,
+          twoTone ? twoToneBandColour(outlineColour) : undefined,
         )
       : { data: raster, w: rasterW, h: rasterH };
 

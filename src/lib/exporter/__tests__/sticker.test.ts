@@ -3,11 +3,13 @@ import { makeGrid, recomputePalette } from "@/lib/grid/grid";
 import type { Grid } from "@/lib/grid/types";
 import {
   buildStickerGrid,
+  normaliseOutlineColour,
   normaliseOutlineWidth,
   outlinePixels,
   renderStickerLayer,
   resolveStickerBackground,
   rotatePixelsNearest,
+  twoToneBandColour,
   type StickerOpts,
 } from "@/lib/exporter/sticker";
 
@@ -35,6 +37,7 @@ const baseOpts: StickerOpts = {
 const SEL = { x: 9, y: 3, w: 6, h: 6 };
 const BODY = [170, 51, 85, 255]; // #aa3355
 const WHITE = [255, 255, 255, 255];
+const BLACK = [0, 0, 0, 255];
 const CLEAR = [0, 0, 0, 0];
 
 function pixelAt(buf: Uint8ClampedArray, w: number, x: number, y: number): number[] {
@@ -66,6 +69,30 @@ describe("normaliseOutlineWidth", () => {
   it("non-finite input falls back to the 0.5 default", () => {
     expect(normaliseOutlineWidth(Number.NaN)).toBe(0.5);
     expect(normaliseOutlineWidth(Number.POSITIVE_INFINITY)).toBe(0.5);
+  });
+});
+
+describe("normaliseOutlineColour", () => {
+  it("keeps white and black (case/shorthand-insensitive)", () => {
+    expect(normaliseOutlineColour("#ffffff")).toBe("#ffffff");
+    expect(normaliseOutlineColour("#FFFFFF")).toBe("#ffffff");
+    expect(normaliseOutlineColour("#000000")).toBe("#000000");
+    expect(normaliseOutlineColour("#000")).toBe("#000000");
+  });
+  it("anything else falls back to white", () => {
+    for (const bad of ["#aa3355", "red", "", "#12345", "not-a-colour"]) {
+      expect(normaliseOutlineColour(bad)).toBe("#ffffff");
+    }
+  });
+});
+
+describe("twoToneBandColour", () => {
+  it("is the exact opposite of the outline colour", () => {
+    expect(twoToneBandColour("#ffffff")).toBe("#000000");
+    expect(twoToneBandColour("#000000")).toBe("#ffffff");
+  });
+  it("invalid outline colours normalise to white -> black band", () => {
+    expect(twoToneBandColour("#aa3355")).toBe("#000000");
   });
 });
 
@@ -139,28 +166,41 @@ describe("outlinePixels", () => {
     expect([...seen].sort()).toEqual([BODY.join(","), WHITE.join(",")].sort());
   });
 
-  it("two-tone adds an exactly bandPx-wide darker outer ring", () => {
+  it("two-tone adds an exactly bandPx-wide opposite-colour outer ring (both directions)", () => {
     const r = 4;
     const band = 2;
-    const DARK = [153, 153, 153, 255]; // #999999
-    const { data, w } = outlinePixels(solidSrc(8, 8), 8, 8, r, "#ffffff", band, "#999999");
-    expect(w).toBe(8 + 2 * (r + band));
-    const mid = Math.floor(w / 2);
-    // scanline: band px dark, r px white, 8 px body, r px white, band px dark
-    const runs: [number, number[]][] = [
-      [band, DARK],
-      [r, WHITE],
-      [8, BODY],
-      [r, WHITE],
-      [band, DARK],
-    ];
-    let x = 0;
-    for (const [len, colour] of runs) {
-      for (let k = 0; k < len; k++, x++) {
-        expect(pixelAt(data, w, x, mid), `x=${x}`).toEqual(colour);
+    for (const [outline, bandCol] of [
+      [WHITE, BLACK],
+      [BLACK, WHITE],
+    ] as const) {
+      const outlineHex = outline === WHITE ? "#ffffff" : "#000000";
+      const { data, w } = outlinePixels(
+        solidSrc(8, 8),
+        8,
+        8,
+        r,
+        outlineHex,
+        band,
+        twoToneBandColour(outlineHex),
+      );
+      expect(w).toBe(8 + 2 * (r + band));
+      const mid = Math.floor(w / 2);
+      // scanline: band px opposite, r px outline, 8 px body, r px outline, band px opposite
+      const runs: [number, readonly number[]][] = [
+        [band, bandCol],
+        [r, outline],
+        [8, BODY],
+        [r, outline],
+        [band, bandCol],
+      ];
+      let x = 0;
+      for (const [len, colour] of runs) {
+        for (let k = 0; k < len; k++, x++) {
+          expect(pixelAt(data, w, x, mid), `outline=${outlineHex} x=${x}`).toEqual([...colour]);
+        }
       }
+      expect(x).toBe(w);
     }
-    expect(x).toBe(w);
   });
 
   it("radius 0 with no band is a pure copy", () => {
@@ -291,13 +331,64 @@ describe("renderStickerLayer", () => {
       BODY.join(","),
       "17,17,17,255", // eye #111111
       WHITE.join(","),
-      "153,153,153,255", // two-tone band: darken(#ffffff, 0.4)
+      BLACK.join(","), // two-tone band: opposite of the white outline
       CLEAR.join(","),
     ]);
     for (let i = 0; i < data.length; i += 4) {
       const key = `${data[i]},${data[i + 1]},${data[i + 2]},${data[i + 3]}`;
       if (!allowed.has(key)) throw new Error(`unexpected colour ${key}`);
     }
+  });
+
+  it("two-tone band is the exact opposite colour in both directions", () => {
+    const target = 200;
+    for (const [outlineHex, outline, bandCol] of [
+      ["#ffffff", WHITE, BLACK],
+      ["#000000", BLACK, WHITE],
+    ] as const) {
+      const { data, cellPx, outlinePx, bandPx } = renderStickerLayer(pieceGrid(), SEL, {
+        ...baseOpts,
+        outlineColour: outlineHex,
+        twoTone: true,
+        rotationDeg: 0,
+      }, target);
+      expect(bandPx).toBeGreaterThan(0);
+      // walk a full-width pure-body scanline: to its left must sit exactly
+      // outlinePx outline pixels, then exactly bandPx opposite-colour pixels,
+      // then transparency.
+      let checked = false;
+      for (let y = 0; y < target && !checked; y++) {
+        for (let x = 0; x < target; x++) {
+          if (pixelAt(data, target, x, y).join() !== BODY.join()) continue;
+          let runLen = 0;
+          for (let k = x; k < target && pixelAt(data, target, k, y).join() === BODY.join(); k++) runLen++;
+          if (runLen !== 4 * cellPx) break; // eye row or edge row — skip
+          for (let k = 1; k <= outlinePx; k++) {
+            expect(pixelAt(data, target, x - k, y), `outline px ${k}`).toEqual([...outline]);
+          }
+          for (let k = outlinePx + 1; k <= outlinePx + bandPx; k++) {
+            expect(pixelAt(data, target, x - k, y), `band px ${k}`).toEqual([...bandCol]);
+          }
+          expect(pixelAt(data, target, x - outlinePx - bandPx - 1, y)).toEqual(CLEAR);
+          checked = true;
+          break;
+        }
+      }
+      expect(checked, `found a measurable scanline for ${outlineHex}`).toBe(true);
+    }
+  });
+
+  it("invalid outline colour normalises to white (band black)", () => {
+    const target = 200;
+    const { data } = renderStickerLayer(pieceGrid(), SEL, {
+      ...baseOpts,
+      outlineColour: "#12ab34",
+      twoTone: true,
+      rotationDeg: 0,
+    }, target);
+    expect(countColour(data, WHITE)).toBeGreaterThan(0);
+    expect(countColour(data, BLACK)).toBeGreaterThan(0);
+    expect(countColour(data, [0x12, 0xab, 0x34, 255])).toBe(0);
   });
 
   it("two-tone band radius is round(0.25 * cellPx) beyond the outline", () => {
