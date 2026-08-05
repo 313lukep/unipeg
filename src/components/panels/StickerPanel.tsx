@@ -552,6 +552,54 @@ export function StickerControls() {
       className="flex w-full flex-col gap-[8px]"
       onPointerDownCapture={s.beginDrag}
     >
+      {/* SELECT: which selection drives the cutout. BOX is the rectangle on
+          the stage; HIGHLIGHT paints exact cells there instead (seeded from
+          the box the first time, so the head is already there to refine). */}
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="text-[13px] font-semibold text-ink">Select</span>
+        <Pill
+          variant={s.selectMode === "box" ? "active" : "card"}
+          aria-pressed={s.selectMode === "box"}
+          onClick={() => s.chooseSelectMode("box")}
+        >
+          BOX
+        </Pill>
+        <Pill
+          variant={s.selectMode === "highlight" ? "active" : "card"}
+          aria-pressed={s.selectMode === "highlight"}
+          onClick={() => s.chooseSelectMode("highlight")}
+        >
+          HIGHLIGHT
+        </Pill>
+        {s.selectMode === "highlight" && (
+          <>
+            <span
+              className="font-mono text-[12px] leading-none text-mute"
+              data-testid="mask-count"
+            >
+              {s.maskCount} CELLS
+            </span>
+            <Pill variant="card" onClick={s.clearMask}>
+              CLEAR
+            </Pill>
+            <Pill variant="card" onClick={s.seedMaskFromBox}>
+              HEAD
+            </Pill>
+          </>
+        )}
+      </div>
+
+      {/* empty mask: the exporter's own words, in-palette, export disabled */}
+      {s.maskEmpty && (
+        <p
+          role="alert"
+          data-testid="mask-empty-guard"
+          className="border-2 border-ink p-3 font-mono text-[12px] leading-snug text-ink"
+        >
+          {EMPTY_MASK_MESSAGE}
+        </p>
+      )}
+
       <div className="grid grid-cols-1 items-center gap-x-[24px] gap-y-[6px] lg:grid-cols-2 lg:gap-y-[4px]">
         {/* outline thickness: 0..1.5 cells in 1/4 steps, default 1/2 */}
         <div className="u-cslider-row">
@@ -712,12 +760,20 @@ export function StickerControls() {
             <span className="font-mono">{sz}</span>
           </Pill>
         ))}
-        <Pill variant="ink" onClick={s.handleDownload} disabled={s.busy}>
+        <Pill
+          variant="ink"
+          onClick={s.handleDownload}
+          disabled={s.busy || s.maskEmpty}
+        >
           <span className="font-mono">
             {s.savedLabel ?? `DOWNLOAD ${s.exportSize}×${s.exportSize} PNG`}
           </span>
         </Pill>
-        <Pill variant="card" onClick={s.handleCopy} disabled={s.busy}>
+        <Pill
+          variant="card"
+          onClick={s.handleCopy}
+          disabled={s.busy || s.maskEmpty}
+        >
           <span className="font-mono">{s.copyLabel ?? "COPY PNG"}</span>
         </Pill>
         <span className="font-mono text-[12px] text-mute">{s.filename}</span>

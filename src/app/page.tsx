@@ -41,6 +41,7 @@ import {
   StickerPreview,
   StickerControls,
   StickerStageDragLayer,
+  type SelectMode,
 } from "@/components/panels/StickerPanel";
 import MicroLabel from "@/components/ui/MicroLabel";
 import Pill from "@/components/ui/Pill";
