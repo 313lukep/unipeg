@@ -1,11 +1,14 @@
 /**
  * unipegPFP — Offline Unipeg · toolbar popup.
- * Set the piece, toggle the new tab takeover, see the best run, open the board.
+ * Lock in a piece, toggle the new tab takeover, see the best run, open the board.
  * Validation uses the bundled snapshot, so it is accurate with the network off.
  */
 
+import { resolvePiece, missMessage } from "./pages/resolve.js";
+
 const KEY = {
   piece: "upegpfp.pieceId",
+  locked: "upegpfp.pieceLocked",
   high: "upegpfp.highScore",
   newtab: "upegpfp.newtabEnabled",
 };
@@ -65,15 +68,17 @@ el("pieceForm").addEventListener("submit", async (event) => {
     return;
   }
   const mod = await getUpeg();
-  if (mod && typeof mod.seedForId === "function") {
-    const seed = await mod.seedForId(id);
-    if (seed === null || seed === undefined) {
-      say(`#${id} — MINTED, NOT ALIVE. Its tokens returned to the pool.`, true);
+  if (mod) {
+    // A submit is a user gesture, so a piece minted after this build was
+    // packaged may ask for the optional upegpfp.art permission here.
+    const found = await resolvePiece(mod, id, { allowNetwork: true });
+    if (found.seed === null || found.seed === undefined) {
+      say(missMessage(id, found.reason), true);
       return;
     }
   }
-  await chrome.storage.local.set({ [KEY.piece]: id });
-  say(`Saved. #${id} is your peg.`);
+  await chrome.storage.local.set({ [KEY.piece]: id, [KEY.locked]: true });
+  say(`Locked in. #${id} is your peg, online or off.`);
 });
 
 el("newtab").addEventListener("change", async (event) => {
@@ -83,6 +88,13 @@ el("newtab").addEventListener("change", async (event) => {
       ? "New tab takeover on."
       : "New tab takeover off — new tabs show a blank Unipeg card."
   );
+});
+
+/** Unlock and hand the user to the full setup panel, where the preview lives. */
+el("change").addEventListener("click", async () => {
+  await chrome.storage.local.set({ [KEY.locked]: false });
+  await chrome.tabs.create({ url: chrome.runtime.getURL("pages/newtab.html") });
+  window.close();
 });
 
 el("play").addEventListener("click", async () => {

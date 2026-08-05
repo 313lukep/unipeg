@@ -365,6 +365,51 @@ input[type="number"]::-webkit-inner-spin-button {
   margin-top: 20px;
 }
 
+.pickform .btn[disabled] {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* Setup: the live preview sits beside the number you're typing, so the piece
+   is a thing you can see before it's a thing you commit to. */
+.setup {
+  display: flex;
+  align-items: flex-start;
+  gap: 28px;
+  margin-top: 20px;
+}
+
+.preview {
+  flex: none;
+  text-align: center;
+}
+
+.previewnum {
+  font-size: 12px;
+  letter-spacing: 0.1em;
+  color: var(--mute);
+  margin: 10px 0 0;
+}
+
+.previewnum.live {
+  color: var(--ink);
+}
+
+.setupbody {
+  flex: 1;
+  min-width: 0;
+}
+
+.setupcopy {
+  color: var(--mute);
+  margin: 0;
+  max-width: 52ch;
+}
+
+#fetchBtn {
+  margin-top: 14px;
+}
+
 .note {
   font-family: var(--mono);
   font-size: 12px;
@@ -465,6 +510,20 @@ dialog h2 {
 
   .stage {
     height: clamp(150px, 26vh, 200px);
+  }
+
+  .setup {
+    flex-direction: column;
+    align-items: center;
+    gap: 18px;
+  }
+
+  .setupcopy {
+    text-align: center;
+  }
+
+  .pickform {
+    justify-content: center;
   }
 
   .foot {

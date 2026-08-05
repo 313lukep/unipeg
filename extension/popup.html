@@ -58,6 +58,11 @@
         width: 100%;
         margin-top: 16px;
       }
+      #change {
+        width: 100%;
+        margin-top: 8px;
+        font-size: 11px;
+      }
       .field:last-of-type {
         margin-bottom: 0;
         margin-top: 22px;
@@ -87,7 +92,7 @@
             placeholder="185206"
             required
           />
-          <button type="submit" class="btn solid">Save</button>
+          <button type="submit" class="btn solid">Lock in</button>
         </span>
         <span class="help" id="note" role="status"></span>
       </label>
@@ -107,6 +112,7 @@
     </div>
 
     <button type="button" id="play" class="btn">Play now</button>
+    <button type="button" id="change" class="btn quiet">Change peg — with a preview</button>
 
     <script type="module" src="popup.js"></script>
   </body>

@@ -9,6 +9,7 @@
     "128": "icons/icon128.png"
   },
   "permissions": ["webNavigation", "storage"],
+  "optional_host_permissions": ["https://upegpfp.art/*"],
   "background": {
     "service_worker": "background.js",
     "type": "module"

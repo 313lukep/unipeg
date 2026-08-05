@@ -1,21 +1,28 @@
 /**
  * unipegPFP — Offline Unipeg · shared page script for offline.html + newtab.html.
  *
- * Both entries share everything below the header: the piece portrait, the runner,
- * the score bar and settings. The only per-mode difference is `body[data-mode]`
- * and the header markup each HTML file ships.
+ * Both entries share everything below the header: the setup panel, the piece
+ * portrait, the runner, the score bar and settings. The only per-mode difference
+ * is `body[data-mode]` and the header markup each HTML file ships.
  *
- * Nothing here touches the network. The renderer, the layer data and the
- * id -> seed snapshot are all bundled with the extension; that is the whole point.
+ * The render path never touches the network. The renderer, the layer data and
+ * the id -> seed snapshot are all bundled with the extension; that is the whole
+ * point. The single exception lives in resolve.js and is opt-in: an id minted
+ * after this build was packaged cannot be in the bundle, so we offer to fetch it
+ * once. Everything else — including every piece you have already locked in —
+ * works with the network completely off.
  */
+
+import { resolvePiece, missMessage, canFetch } from "./resolve.js";
 
 const KEY = {
   piece: "upegpfp.pieceId",
+  locked: "upegpfp.pieceLocked",
   high: "upegpfp.highScore",
   newtab: "upegpfp.newtabEnabled",
 };
 
-/** The project's mascot — a guaranteed-alive piece, offered on first run. */
+/** The project's mascot — a guaranteed-alive piece, offered during setup. */
 const MASCOT = 185206;
 const MAX_ID = 400000;
 
@@ -37,6 +44,7 @@ const PALETTE = {
 
 const state = {
   pieceId: null,
+  locked: false,
   high: 0,
   newtabEnabled: true,
   game: null,
@@ -45,6 +53,10 @@ const state = {
   piecePalette: [],
   aliveCount: null,
   applyingOwnChange: false,
+  // Setup panel
+  previewId: null,
+  previewToken: 0,
+  pendingFetchId: null,
 };
 
 /* ── storage ──────────────────────────────────────────────────────────── */
@@ -140,23 +152,34 @@ async function loadLibs() {
 
 /* ── rendering ────────────────────────────────────────────────────────── */
 
-/** Sizes the portrait canvas so one grid cell is always a whole device pixel. */
-function portraitContext() {
-  const canvas = el("portrait");
+/**
+ * Sizes a 24x24 canvas so one grid cell is always a whole number of device
+ * pixels. `basePx` is CSS px per cell; the device scale multiplies it, and both
+ * are integers, so the piece is never resampled.
+ */
+function pixelTarget(canvasId, basePx) {
+  const canvas = el(canvasId);
   if (!canvas) return null;
-  const base = window.innerWidth < 560 ? 3 : 4; // CSS px per cell
-  const cellPx = base * deviceScale(); // device px per cell — always an integer
+  const cellPx = basePx * deviceScale(); // device px per cell — always an integer
   canvas.width = 24 * cellPx;
   canvas.height = 24 * cellPx;
-  canvas.style.width = 24 * base + "px";
-  canvas.style.height = 24 * base + "px";
+  canvas.style.width = 24 * basePx + "px";
+  canvas.style.height = 24 * basePx + "px";
   const ctx = canvas.getContext("2d");
   ctx.imageSmoothingEnabled = false;
   return { ctx, cellPx, canvas };
 }
 
+function portraitTarget() {
+  return pixelTarget("portrait", window.innerWidth < 560 ? 3 : 4);
+}
+
+function previewTarget() {
+  return pixelTarget("setupPreview", window.innerWidth < 560 ? 4 : 5);
+}
+
 function drawPortrait(grid) {
-  const target = portraitContext();
+  const target = portraitTarget();
   if (!target) return;
   lib.sprite.drawGrid(target.ctx, grid, target.cellPx, 0, 0);
 }
@@ -165,8 +188,7 @@ function drawPortrait(grid) {
  * Empty state from docs/DESIGN.md: a blank 24x24 ghost grid with one lone pink
  * pixel at cell (12,4) — where a horn would be. It does not blink; it waits.
  */
-function drawGhostPortrait() {
-  const target = portraitContext();
+function drawGhost(target) {
   if (!target) return;
   const { ctx, cellPx, canvas } = target;
   const rule = deviceScale();
@@ -273,47 +295,146 @@ function showOnly(which) {
   if (head) head.hidden = which === "off" || (which === "pick" && MODE === "newtab");
 }
 
-function showPick(note, bad) {
-  showOnly("pick");
-  drawGhostPortrait();
-  const noteEl = el("pickNote");
-  if (noteEl) {
-    noteEl.textContent = note || "Any alive piece, 1 to 400000. Rendered locally, offline.";
-    noteEl.classList.toggle("bad", Boolean(bad));
-  }
-  const input = el("pickInput");
-  if (input) input.focus();
+/* ── setup panel ──────────────────────────────────────────────────────── */
+
+const DEFAULT_SETUP_NOTE = "Any alive piece, 1 to 400000. Rendered locally, offline.";
+
+function setNote(text, bad) {
+  const node = el("pickNote");
+  if (!node) return;
+  node.textContent = text || DEFAULT_SETUP_NOTE;
+  node.classList.toggle("bad", Boolean(bad));
 }
 
-function showOff() {
-  showOnly("off");
+function setPreviewIdle() {
+  state.previewId = null;
+  drawGhost(previewTarget());
+  const num = el("previewNum");
+  if (num) {
+    num.textContent = "#—";
+    num.classList.remove("live");
+  }
+  const lock = el("lockBtn");
+  if (lock) lock.disabled = true;
 }
+
+/**
+ * Setup / change-peg view. `note` overrides the standing copy (an error, or a
+ * word about why we came back here).
+ */
+function showSetup(note, bad) {
+  showOnly("pick");
+  drawGhost(portraitTarget());
+  setPreviewIdle();
+  show(el("fetchBtn"), false);
+  setNote(note, bad);
+  const input = el("pickInput");
+  if (input) {
+    if (state.pieceId != null && input.value === "") input.value = String(state.pieceId);
+    input.focus();
+    input.select();
+    if (input.value !== "") updatePreview();
+  }
+}
+
+/**
+ * Render whatever is in the input, right now. `allowNetwork` is only ever true
+ * from a click (Lock in, Fetch it once) because asking for an optional
+ * permission requires a user gesture — a keystroke must never open a socket.
+ */
+async function updatePreview(options = {}) {
+  const allowNetwork = options.allowNetwork === true;
+  const token = ++state.previewToken;
+  const input = el("pickInput");
+  const raw = input ? input.value.trim() : "";
+
+  if (raw === "") {
+    setPreviewIdle();
+    show(el("fetchBtn"), false);
+    setNote(null);
+    return null;
+  }
+
+  const id = parseId(raw);
+  if (id === null) {
+    setPreviewIdle();
+    show(el("fetchBtn"), false);
+    setNote(`UpegIndexOutOfRange — ids run 1 to ${MAX_ID}`, true);
+    return null;
+  }
+
+  if (!(await loadLibs())) {
+    setPreviewIdle();
+    setNote("Renderer unavailable. Reload the extension from chrome://extensions.", true);
+    return null;
+  }
+
+  const found = await resolvePiece(lib.upeg, id, { allowNetwork });
+  if (token !== state.previewToken) return null; // a later keystroke won
+
+  if (found.seed === null || found.seed === undefined) {
+    setPreviewIdle();
+    setNote(missMessage(id, found.reason), true);
+    state.pendingFetchId = canFetch(found.reason) ? id : null;
+    const fetchBtn = el("fetchBtn");
+    if (fetchBtn) {
+      fetchBtn.textContent =
+        found.reason === "unreachable" ? "Try upegpfp.art again" : "Fetch it once";
+      show(fetchBtn, state.pendingFetchId !== null);
+    }
+    return null;
+  }
+
+  const grid = await lib.upeg.gridFromSeed(found.seed);
+  if (token !== state.previewToken) return null;
+
+  const target = previewTarget();
+  if (target) lib.sprite.drawGrid(target.ctx, grid, target.cellPx, 0, 0);
+  const num = el("previewNum");
+  if (num) {
+    num.textContent = `#${id}`;
+    num.classList.add("live");
+  }
+  const lock = el("lockBtn");
+  if (lock) lock.disabled = false;
+  show(el("fetchBtn"), false);
+  state.pendingFetchId = null;
+  state.previewId = id;
+  setNote(
+    found.source === "bundled"
+      ? `#${id} — alive. Lock it in and it renders with the network off.`
+      : `#${id} — fetched and cached. It renders offline from now on.`
+  );
+  return id;
+}
+
+/** Saves the piece and flips the lock. From here the page boots straight in. */
+async function lockIn(id) {
+  await setStore({ [KEY.piece]: id, [KEY.locked]: true });
+  window.location.reload();
+}
+
+/* ── the piece ────────────────────────────────────────────────────────── */
 
 async function showPiece(id) {
   const ok = await loadLibs();
   if (!ok) {
-    showPick("Renderer unavailable. Reload the extension from chrome://extensions.", true);
+    showSetup("Renderer unavailable. Reload the extension from chrome://extensions.", true);
     return;
   }
 
-  let seed;
-  try {
-    seed = await lib.upeg.seedForId(id);
-  } catch (err) {
-    // The snapshot is bundled, so this is a broken install, never a dead network.
-    console.error("unipegPFP: snapshot unreadable", err);
-    showPick("Piece snapshot unreadable. Reload the extension from chrome://extensions.", true);
-    return;
-  }
-  if (seed === null || seed === undefined) {
+  // Bundle and cache only: booting must never wait on a socket, even when the
+  // machine is online. If the locked piece somehow is not there, setup explains.
+  const found = await resolvePiece(lib.upeg, id, { allowNetwork: false });
+  if (found.seed === null || found.seed === undefined) {
     const input = el("pickInput");
     if (input) input.value = String(id);
-    showPick(`#${id} — MINTED, NOT ALIVE. Its tokens returned to the pool.`, true);
+    showSetup(missMessage(id, found.reason), true);
     return;
   }
 
   state.pieceId = id;
-  state.grid = await lib.upeg.gridFromSeed(seed);
+  state.grid = await lib.upeg.gridFromSeed(found.seed);
   state.piecePalette =
     typeof lib.upeg.paletteFromGrid === "function" ? lib.upeg.paletteFromGrid(state.grid) : [];
   // Sprite cells are built at the canvas's own device resolution, so the game
@@ -373,10 +494,11 @@ async function saveSettings() {
     return;
   }
   if (lib.upeg) {
-    const seed = await lib.upeg.seedForId(id);
-    if (seed === null || seed === undefined) {
+    // Saving is a click, so the optional fetch is allowed to ask here.
+    const found = await resolvePiece(lib.upeg, id, { allowNetwork: true });
+    if (found.seed === null || found.seed === undefined) {
       if (note) {
-        note.textContent = `#${id} — MINTED, NOT ALIVE. Its tokens returned to the pool.`;
+        note.textContent = missMessage(id, found.reason);
         note.classList.add("bad");
       }
       return;
@@ -385,6 +507,7 @@ async function saveSettings() {
   const toggle = el("setNewtab");
   await setStore({
     [KEY.piece]: id,
+    [KEY.locked]: true,
     [KEY.newtab]: toggle ? toggle.checked : true,
   });
   if (dialog) dialog.close();
@@ -418,25 +541,67 @@ function wireOffline() {
   });
 }
 
-function wirePick() {
+function wireSetup() {
+  const input = el("pickInput");
+  if (input) {
+    let timer = 0;
+    input.addEventListener("input", () => {
+      // The preview is a keystroke behind by definition, so the id it last
+      // agreed to is void the moment the number changes. Lock in re-resolves.
+      state.previewId = null;
+      const lock = el("lockBtn");
+      if (lock) lock.disabled = input.value.trim() === "";
+      clearTimeout(timer);
+      // Short enough to feel live, long enough not to redraw mid-number.
+      timer = setTimeout(() => updatePreview(), 140);
+    });
+  }
+
   const form = el("pickForm");
   if (form) {
     form.addEventListener("submit", async (event) => {
       event.preventDefault();
-      const id = parseId(el("pickInput").value);
-      if (id === null) {
-        showPick(`UpegIndexOutOfRange — ids run 1 to ${MAX_ID}`, true);
-        return;
-      }
-      await setStore({ [KEY.piece]: id });
-      window.location.reload();
+      // Re-validate on submit: the preview may be a keystroke behind, and this
+      // click is also our one chance to ask for the optional fetch permission.
+      const id = state.previewId ?? (await updatePreview({ allowNetwork: true }));
+      if (id === null || id === undefined) return;
+      await lockIn(id);
     });
   }
+
   const mascot = el("pickMascot");
   if (mascot) {
-    mascot.addEventListener("click", async () => {
-      await setStore({ [KEY.piece]: MASCOT });
-      window.location.reload();
+    mascot.addEventListener("click", () => {
+      if (input) {
+        input.value = String(MASCOT);
+        input.focus();
+      }
+      updatePreview();
+    });
+  }
+
+  const fetchBtn = el("fetchBtn");
+  if (fetchBtn) {
+    fetchBtn.addEventListener("click", async () => {
+      const id = state.pendingFetchId;
+      if (id === null) return;
+      fetchBtn.disabled = true;
+      setNote(`Asking upegpfp.art about #${id}…`);
+      try {
+        await updatePreview({ allowNetwork: true });
+      } finally {
+        fetchBtn.disabled = false;
+      }
+    });
+  }
+
+  const change = el("changeBtn");
+  if (change) {
+    change.addEventListener("click", async () => {
+      stopGame();
+      state.locked = false;
+      await setStore({ [KEY.locked]: false });
+      showSetup("Change your peg. The one you have stays put until you lock a new one in.");
     });
   }
 }
@@ -513,6 +678,10 @@ function wireResize() {
     clearTimeout(timer);
     // Debounced: re-fits the board to the new size, which restarts the run.
     timer = setTimeout(() => {
+      if (!el("pick").hidden) {
+        updatePreview();
+        return;
+      }
       if (!state.grid) return;
       drawPortrait(state.grid);
       bootGame();
@@ -531,8 +700,10 @@ function wireStorage() {
       }
     }
     if (state.applyingOwnChange) return;
-    // The popup can change the piece or the takeover while a page is open.
-    if (changes[KEY.piece] || changes[KEY.newtab]) window.location.reload();
+    // The popup can change the piece, the lock or the takeover while a page is open.
+    if (changes[KEY.piece] || changes[KEY.newtab] || changes[KEY.locked]) {
+      window.location.reload();
+    }
   });
 }
 
@@ -540,26 +711,31 @@ function wireStorage() {
 
 async function main() {
   if (MODE === "offline") wireOffline();
-  wirePick();
+  wireSetup();
   wireSettings();
   wireKeys();
   wireResize();
   wireStorage();
 
-  const store = await getStore([KEY.piece, KEY.high, KEY.newtab]);
+  const store = await getStore([KEY.piece, KEY.locked, KEY.high, KEY.newtab]);
   state.high = Number.isFinite(store[KEY.high]) ? store[KEY.high] : 0;
   state.newtabEnabled = store[KEY.newtab] !== false;
   paintHigh();
 
   if (MODE === "newtab" && !state.newtabEnabled) {
-    showOff();
+    showOnly("off");
     return;
   }
 
   const id = parseId(store[KEY.piece]);
-  if (id === null) {
+  state.pieceId = id;
+  // A saved piece from before the lock existed counts as locked — nobody should
+  // be asked to set up a thing they already set up.
+  state.locked = id !== null && store[KEY.locked] !== false;
+
+  if (!state.locked) {
     await loadLibs();
-    showPick();
+    showSetup(id === null ? null : "Pick a new peg, or lock the same one back in.");
     return;
   }
   await showPiece(id);
@@ -567,5 +743,5 @@ async function main() {
 
 main().catch((err) => {
   console.error("unipegPFP: page failed", err);
-  showPick("Something broke locally. Reload the extension from chrome://extensions.", true);
+  showSetup("Something broke locally. Reload the extension from chrome://extensions.", true);
 });

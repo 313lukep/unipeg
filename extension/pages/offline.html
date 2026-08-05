@@ -30,24 +30,50 @@
 
       <!-- shared block — keep byte-identical with newtab.html apart from the footer link -->
       <section id="pick" class="pick" hidden>
-        <p class="micro passive">First run</p>
+        <p class="micro">Setup</p>
         <h2 class="display">Pick your peg</h2>
-        <form class="pickform" id="pickForm" novalidate>
-          <input
-            type="number"
-            id="pickInput"
-            min="1"
-            max="400000"
-            step="1"
-            inputmode="numeric"
-            placeholder="185206"
-            aria-label="Unipeg piece number"
-            required
-          />
-          <button type="submit" class="btn solid">Save</button>
-          <button type="button" id="pickMascot" class="btn">Use #185206</button>
-        </form>
-        <p class="note" id="pickNote">Any alive piece, 1 to 400000. Rendered locally, offline.</p>
+        <div class="setup">
+          <div class="preview">
+            <div class="plate">
+              <canvas
+                id="setupPreview"
+                width="120"
+                height="120"
+                role="img"
+                aria-label="Preview of the piece you typed"
+              ></canvas>
+            </div>
+            <p class="mono previewnum" id="previewNum" aria-live="polite">#&mdash;</p>
+          </div>
+          <div class="setupbody">
+            <p class="setupcopy">
+              Type a piece number &mdash; you&rsquo;ll see it straight away. Lock it in and it
+              becomes your peg on every new tab and on the offline page. It keeps rendering with
+              the network completely off: the artwork is drawn from data bundled inside the
+              extension, never fetched.
+            </p>
+            <form class="pickform" id="pickForm" novalidate>
+              <input
+                type="number"
+                id="pickInput"
+                min="1"
+                max="400000"
+                step="1"
+                inputmode="numeric"
+                placeholder="185206"
+                aria-label="Unipeg piece number"
+                autocomplete="off"
+                required
+              />
+              <button type="submit" id="lockBtn" class="btn solid" disabled>Lock in</button>
+              <button type="button" id="pickMascot" class="btn">Try #185206</button>
+            </form>
+            <p class="note" id="pickNote" aria-live="polite">
+              Any alive piece, 1 to 400000. Rendered locally, offline.
+            </p>
+            <button type="button" id="fetchBtn" class="btn" hidden>Fetch it once</button>
+          </div>
+        </div>
       </section>
 
       <section id="offState" class="off" hidden>
@@ -65,6 +91,7 @@
         <span>Score <b id="score">0</b></span>
         <span>Best <b id="best">0</b></span>
         <span class="spacer"></span>
+        <button type="button" id="changeBtn" class="btn quiet">Change peg</button>
         <button type="button" id="settingsBtn" class="btn quiet">Settings</button>
       </footer>
     </div>
