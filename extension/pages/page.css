@@ -124,7 +124,11 @@ canvas {
 .sub {
   color: var(--mute);
   margin: 12px 0 0;
-  max-width: 46ch;
+  max-width: 50ch;
+}
+
+.nowrap {
+  white-space: nowrap;
 }
 
 .mono {

@@ -384,6 +384,42 @@ describe("game.js — startGame shell", () => {
     expect(() => startGame({} as never)).toThrow(/canvas/);
   });
 
+  it("takes the piece colours from either a plain array or a theme object", () => {
+    const seen = new Set<string>();
+    const { canvas } = stubCanvas();
+    const ctx = canvas.getContext("2d") as unknown as { fillStyle: string };
+    Object.defineProperty(ctx, "fillStyle", {
+      get: () => "",
+      set: (v: string) => {
+        seen.add(v);
+      },
+    });
+    let cb: FrameRequestCallback | null = null;
+    vi.stubGlobal("requestAnimationFrame", (fn: FrameRequestCallback) => {
+      cb = fn;
+      return 1;
+    });
+    vi.stubGlobal("cancelAnimationFrame", () => {});
+
+    const frames = Object.assign([fakeFrame(88, 96), fakeFrame(88, 96)], { cellPx: 4 });
+    const game = startGame({
+      canvas,
+      frames,
+      // the shape the page actually sends: tokens + the piece's colours
+      palette: { ink: "#111111", mute: "#222222", accent: "#333333", piece: ["#ac3232"] },
+      scale: 2,
+      reducedMotion: true,
+    });
+    game.restart();
+    for (let t = 16; t < 6000 && game.getState() === "running"; t += 16) cb!(t);
+    expect(seen.has("#ac3232")).toBe(true); // obstacles wear the piece's colour
+    expect(seen.has("#222222")).toBe(true); // ground line uses the page's mute
+    expect(seen.has("#FF4DA1")).toBe(false); // never falls back to raw pink
+    // scale:2 is honoured instead of the ambient devicePixelRatio
+    expect(canvas.width).toBe(1600);
+    game.stop();
+  });
+
   it("is losable: a player who never jumps crashes into the first obstacle", async () => {
     const { canvas } = stubCanvas();
     let cb: FrameRequestCallback | null = null;
@@ -399,9 +435,10 @@ describe("game.js — startGame shell", () => {
     for (let t = 16; t < 15_000 && game.getState() === "running"; t += 16) cb!(t);
     expect(game.getState()).toBe("over");
     expect(game.getScore()).toBeGreaterThan(0);
-    // The run is banked as a high score.
-    await Promise.resolve();
-    expect(await loadHighScore()).toBe(game.getScore());
+    // The run is banked as a high score, once storage has answered.
+    await vi.waitFor(async () => {
+      expect(await loadHighScore()).toBe(game.getScore());
+    });
     game.stop();
   });
 

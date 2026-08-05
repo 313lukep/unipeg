@@ -44,7 +44,6 @@ const state = {
   grid: null,
   piecePalette: [],
   aliveCount: null,
-  hintDismissed: false,
   applyingOwnChange: false,
 };
 
@@ -329,11 +328,11 @@ async function showPiece(id) {
   setText("pieceChip", `#${id}`);
   paintHigh();
   setText("score", "0");
-  setHint(MODE === "newtab" ? "Click the board, then press space" : "Space or tap to jump");
+  setHint("");
   bootGame();
-
-  const canvas = el("run");
-  if (canvas && MODE === "offline") canvas.focus({ preventScroll: true });
+  // Deliberately no programmatic focus: the offline page already owns the
+  // keyboard (window-level handlers), and focusing the board on load paints a
+  // focus ring around the whole stage, which reads as an error box.
 }
 
 /* ── settings ─────────────────────────────────────────────────────────── */
@@ -489,20 +488,18 @@ function wireKeys() {
       const dialog = el("settings");
       if (dialog && dialog.open) return;
       if (isTypingTarget(event.target)) return;
-      if (event.code === "Space" || event.code === "ArrowUp") {
-        event.preventDefault();
-        dismissHint();
-      }
+      if (event.code === "Space" || event.code === "ArrowUp") event.preventDefault();
     },
     false
   );
 
+  // A new tab opens with the address bar focused, so the first click on the
+  // board is what actually hands the keyboard to the game.
   const stage = el("stage");
   if (stage) {
     stage.addEventListener("pointerdown", () => {
       const canvas = el("run");
       if (canvas) canvas.focus({ preventScroll: true });
-      dismissHint();
     });
   }
 }

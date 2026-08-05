@@ -60,6 +60,12 @@
       }
       .field:last-of-type {
         margin-bottom: 0;
+        margin-top: 22px;
+      }
+      .help.bad {
+        color: var(--ink);
+        border-left: 2px solid var(--pink);
+        padding-left: 8px;
       }
     </style>
   </head>
@@ -67,7 +73,7 @@
     <p class="wordmark">unipegPFP</p>
     <p class="tagline">Offline Unipeg</p>
 
-    <form id="pieceForm">
+    <form id="pieceForm" novalidate>
       <label class="field">
         <span class="label">Piece number</span>
         <span class="row">

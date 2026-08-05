@@ -200,6 +200,32 @@ const INK = "#F7F7F8";
 const MUTE = "#9C9CA6";
 const PINK = "#FF4DA1";
 
+const isHex = (v) => typeof v === "string" && /^#[0-9a-fA-F]{3,8}$/.test(v);
+
+/**
+ * `palette` may be the piece's colours as a plain array (the shared contract's
+ * minimum) or a theme object carrying them under `piece`/`colours` alongside
+ * the page's own tokens. Accept both, so the game stays in palette with
+ * whatever the page hands it.
+ */
+function pieceColours(palette) {
+  const raw = Array.isArray(palette)
+    ? palette
+    : palette && typeof palette === "object"
+      ? palette.piece || palette.colours || []
+      : [];
+  return (Array.isArray(raw) ? raw : []).filter(isHex);
+}
+
+function paletteTheme(palette) {
+  const p = !Array.isArray(palette) && palette && typeof palette === "object" ? palette : {};
+  return {
+    ink: isHex(p.ink) ? p.ink : INK,
+    mute: isHex(p.mute) ? p.mute : MUTE,
+    accent: isHex(p.accent) ? p.accent : isHex(p.pink) ? p.pink : PINK,
+  };
+}
+
 function prefersReducedMotion() {
   try {
     return typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -214,10 +240,14 @@ function prefersReducedMotion() {
  * @param {object} opts
  * @param {HTMLCanvasElement} opts.canvas
  * @param {HTMLCanvasElement[]} opts.frames  run-cycle frames from buildRunFrames
- * @param {string[]} opts.palette            the piece's own colours
+ * @param {string[]|object} opts.palette     the piece's own colours — either a
+ *   plain array, or a theme object with them under `piece`
  * @param {(score:number, meta:{high:number,state:string})=>void} [opts.onScore]
+ * @param {number} [opts.scale]              device-pixel ratio the page sized
+ *   the canvas and the sprite frames at; keeps the blit exactly 1:1
+ * @param {boolean} [opts.reducedMotion]     overrides the media query
  */
-export function startGame({ canvas, frames, palette, onScore, config } = {}) {
+export function startGame({ canvas, frames, palette, onScore, config, scale, reducedMotion } = {}) {
   if (!canvas) throw new Error("startGame needs a canvas");
   const cfg = { ...DEFAULTS, ...(config || {}) };
   const ctx = canvas.getContext("2d");
@@ -227,14 +257,23 @@ export function startGame({ canvas, frames, palette, onScore, config } = {}) {
   const spriteH = sprite ? sprite[0].height : 96;
   const spriteW = sprite ? sprite[0].width : 96;
   const cellPx = Math.max(1, Math.round((frames && frames.cellPx) || spriteH / 24));
-  const colours = (palette && palette.length ? palette : [PINK]).slice(0, 6);
+  // Obstacles are drawn on a coarser grid than the art: one obstacle unit is an
+  // eighth of the unicorn's height, so a 3-unit cactus reads as about a third of
+  // the runner rather than a speck. Still an integer, still pixel-perfect.
+  const obstacleUnit = Math.max(cellPx, Math.round(spriteH / 8));
+  const found = pieceColours(palette);
+  const colours = (found.length ? found : [PINK]).slice(0, 6);
+  const theme = paletteTheme(palette);
 
   // Everything below is in device pixels, derived once from the sprite height.
   const gravity = cfg.gravity * spriteH;
   const jumpV = cfg.jumpVelocity * spriteH;
   const scoreUnit = cfg.scoreUnit * spriteH;
 
-  const reduced = prefersReducedMotion();
+  const reduced = typeof reducedMotion === "boolean" ? reducedMotion : prefersReducedMotion();
+  // The page tells us the ratio it built the sprite frames at; matching it here
+  // is what keeps every sprite pixel landing on a whole device pixel.
+  const ratio = Number.isFinite(scale) && scale > 0 ? scale : null;
 
   let width = 0;
   let height = 0;
@@ -257,8 +296,10 @@ export function startGame({ canvas, frames, palette, onScore, config } = {}) {
   let last = 0;
   let stopped = false;
 
+  let highLoaded = false;
   loadHighScore().then((v) => {
-    high = v;
+    high = Math.max(high, v);
+    highLoaded = true;
     emit();
   });
 
@@ -267,7 +308,7 @@ export function startGame({ canvas, frames, palette, onScore, config } = {}) {
   }
 
   function resize() {
-    const dpr = Math.min(Math.max(globalThis.devicePixelRatio || 1, 1), 3);
+    const dpr = ratio || Math.min(Math.max(globalThis.devicePixelRatio || 1, 1), 3);
     const cssW = canvas.clientWidth || canvas.width || 640;
     const cssH = canvas.clientHeight || canvas.height || 220;
     const w = Math.max(1, Math.round(cssW * dpr));
@@ -330,20 +371,26 @@ export function startGame({ canvas, frames, palette, onScore, config } = {}) {
   function spawn() {
     const { shape, colour } = pickObstacle(rng, colours);
     obstacles.push({
-      x: width + cellPx * 2,
+      x: width + obstacleUnit,
       shape,
       colour,
-      w: shape.w * cellPx,
-      h: shape.h * cellPx,
-      scored: false,
+      w: shape.w * obstacleUnit,
+      h: shape.h * obstacleUnit,
     });
   }
 
-  function gameOver() {
+  async function gameOver() {
     state = "over";
+    emit();
+    // A very short first run can end before storage has answered; banking the
+    // score without waiting would overwrite a real best with a worse one.
+    if (!highLoaded) {
+      high = Math.max(high, await loadHighScore());
+      highLoaded = true;
+    }
     if (score > high) {
       high = score;
-      saveHighScore(high);
+      await saveHighScore(high);
     }
     emit();
   }
@@ -368,7 +415,7 @@ export function startGame({ canvas, frames, palette, onScore, config } = {}) {
       nextGap = Math.max(0.9, (cfg.gapMin + rng() * span) * easing);
     }
     for (const o of obstacles) o.x -= speed * dt;
-    obstacles = obstacles.filter((o) => o.x + o.w > -cellPx * 2);
+    obstacles = obstacles.filter((o) => o.x + o.w > -obstacleUnit);
 
     // Score.
     const next = scoreFromDistance(distance, scoreUnit);
@@ -415,7 +462,7 @@ export function startGame({ canvas, frames, palette, onScore, config } = {}) {
     ctx.imageSmoothingEnabled = false;
 
     // Ground line + specks.
-    ctx.fillStyle = MUTE;
+    ctx.fillStyle = theme.mute;
     ctx.globalAlpha = 0.45;
     ctx.fillRect(0, groundY, width, Math.max(1, Math.round(cellPx / 2)));
     for (const s of specks) {
@@ -428,10 +475,10 @@ export function startGame({ canvas, frames, palette, onScore, config } = {}) {
       ctx.fillStyle = o.colour;
       for (const [cx, cy, cw, ch] of o.shape.cells) {
         ctx.fillRect(
-          Math.round(o.x) + cx * cellPx,
-          groundY - (cy + ch) * cellPx,
-          cw * cellPx,
-          ch * cellPx,
+          Math.round(o.x) + cx * obstacleUnit,
+          groundY - (cy + ch) * obstacleUnit,
+          cw * obstacleUnit,
+          ch * obstacleUnit,
         );
       }
     }
@@ -443,7 +490,7 @@ export function startGame({ canvas, frames, palette, onScore, config } = {}) {
     if (sprite) {
       ctx.drawImage(sprite[Math.min(idx, sprite.length - 1)], Math.round(runnerX), y);
     } else {
-      ctx.fillStyle = PINK;
+      ctx.fillStyle = theme.accent;
       ctx.fillRect(Math.round(runnerX), y, spriteW, spriteH);
     }
 
@@ -456,10 +503,10 @@ export function startGame({ canvas, frames, palette, onScore, config } = {}) {
     ctx.font = `700 ${size}px "Space Mono", ui-monospace, SFMono-Regular, Menlo, monospace`;
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
-    ctx.fillStyle = state === "over" ? PINK : MUTE;
+    ctx.fillStyle = state === "over" ? theme.accent : theme.mute;
     ctx.fillText(text, Math.round(width / 2), Math.round(groundY - spriteH * 1.6));
     if (state === "over") {
-      ctx.fillStyle = INK;
+      ctx.fillStyle = theme.ink;
       ctx.font = `400 ${Math.max(10, Math.round(size * 0.8))}px "Space Mono", ui-monospace, monospace`;
       ctx.fillText(
         `SCORE ${score} · BEST ${Math.max(high, score)}`,
