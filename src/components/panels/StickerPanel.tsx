@@ -207,14 +207,15 @@ function useStickerEngine({
 
   const chooseSelectMode = useCallback(
     (next: SelectMode) => {
-      // First switch to HIGHLIGHT on this piece seeds from the box rect —
-      // refine the auto-detected head, never start from an empty canvas.
-      if (next === "highlight" && mask === null) {
-        onMaskChange?.(rectMask(selection, gridW, gridH));
+      // Owner: switching to HIGHLIGHT clears the box crop and starts from a
+      // fresh palette — paint exactly what you want. HEAD re-seeds from the
+      // auto-detected head if you'd rather refine that.
+      if (next === "highlight") {
+        onMaskChange?.(new Set<string>());
       }
       onSelectModeChange?.(next);
     },
-    [mask, onMaskChange, onSelectModeChange, selection, gridW, gridH],
+    [onMaskChange, onSelectModeChange],
   );
 
   const clearMask = useCallback(() => {
