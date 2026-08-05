@@ -4,7 +4,7 @@
  * Validation uses the bundled snapshot, so it is accurate with the network off.
  */
 
-import { resolvePiece, missMessage } from "./pages/resolve.js";
+import { resolvePiece, missMessage, canFetch } from "./pages/resolve.js";
 
 const KEY = {
   piece: "upegpfp.pieceId",
@@ -69,11 +69,16 @@ el("pieceForm").addEventListener("submit", async (event) => {
   }
   const mod = await getUpeg();
   if (mod) {
-    // A submit is a user gesture, so a piece minted after this build was
-    // packaged may ask for the optional upegpfp.art permission here.
-    const found = await resolvePiece(mod, id, { allowNetwork: true });
+    // Bundle and cache only. Asking for the optional upegpfp.art permission
+    // from a popup would put a native dialog over a surface Chrome can close
+    // out from under it, so that offer lives on the setup panel — which has the
+    // preview to show for it. (A permission already granted still fetches here,
+    // silently, because nothing needs to be asked.)
+    say(`Checking #${id}…`);
+    const found = await resolvePiece(mod, id, { allowNetwork: false });
     if (found.seed === null || found.seed === undefined) {
-      say(missMessage(id, found.reason), true);
+      const extra = canFetch(found.reason) ? " Open Change peg to fetch it." : "";
+      say(missMessage(id, found.reason) + extra, true);
       return;
     }
   }

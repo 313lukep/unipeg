@@ -369,6 +369,10 @@ async function updatePreview(options = {}) {
     return null;
   }
 
+  // A network-allowed lookup can put a permission prompt on screen; say what is
+  // happening first so the panel is never silently busy behind it.
+  if (allowNetwork) setNote(`Checking #${id}…`);
+
   const found = await resolvePiece(lib.upeg, id, { allowNetwork });
   if (token !== state.previewToken) return null; // a later keystroke won
 

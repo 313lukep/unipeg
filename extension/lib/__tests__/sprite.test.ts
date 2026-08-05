@@ -1,18 +1,31 @@
 import { beforeAll, describe, expect, it } from "vitest";
 
-import { gridFromSeed } from "../upeg.js";
+import { UPEG_BACKGROUND_COLORS, UPEG_COLORS, gridFromSeed } from "../upeg.js";
 import {
   DEFAULT_SCALE,
+  DUCK_RATIO,
+  FLYER_EYE,
+  FLYER_INK,
+  FLYER_PIECE_ID,
+  FLYER_SEED,
+  FLYER_WING_CYCLE,
   RUN_CYCLE,
+  buildFlyerFrames,
+  buildFlyerGrids,
   buildRunCycleGrids,
   buildRunFrames,
   contentBounds,
   drawGrid,
+  duckScaleFor,
+  flyerScaleFor,
   keyOutBackground,
+  mirrorCells,
   runCycleBounds,
+  shadowCells,
   unionBounds,
 } from "../sprite.js";
 import fixtures from "../../../src/lib/upeg/__tests__/fixtures.json";
+import alive from "../../data/upeg-alive.json";
 
 type FixturePair = { id: string; seed: string; svg?: string };
 const pairs = (fixtures as { pairs: FixturePair[] }).pairs.filter((p) => p.svg);
@@ -229,6 +242,152 @@ describe("sprite.js — frame canvases", () => {
   it("survives a piece with nothing painted", () => {
     const empty = { cells: Array.from({ length: 24 }, () => new Array(24).fill("#1a1c2c")), bg: "#1a1c2c" };
     expect(buildRunFrames(empty as never)).toHaveLength(0);
+  });
+});
+
+describe("sprite.js — the crouch", () => {
+  it("only ever picks a smaller INTEGER scale", () => {
+    for (let s = 1; s <= 16; s++) {
+      const d = duckScaleFor(s);
+      expect(Number.isInteger(d)).toBe(true);
+      expect(d).toBeGreaterThanOrEqual(1);
+      expect(d).toBeLessThanOrEqual(s);
+    }
+    // The two scales the page actually ships (dpr 1 and dpr >= 2).
+    expect(duckScaleFor(4)).toBe(3);
+    expect(duckScaleFor(8)).toBe(6);
+    expect(DUCK_RATIO).toBe(3 / 4);
+  });
+
+  it("rides along on the run frames, three quarters the height, same box", () => {
+    const frames = buildRunFrames(gridFromSeed(SEED), { scale: 8 }) as unknown as FakeCanvas[] & {
+      box: { w: number; h: number };
+      duck: FakeCanvas[] & { cellPx: number; box: { w: number; h: number } };
+    };
+    const duck = frames.duck;
+    expect(duck).toHaveLength(frames.length);
+    expect(duck.cellPx).toBe(6);
+    expect(duck.box).toEqual(frames.box);
+    // Exactly 3/4 the standing size — no fractional squash anywhere.
+    expect(duck[0].height).toBe(frames[0].height * 0.75);
+    expect(duck[0].width).toBe(frames[0].width * 0.75);
+    expect(duck[0].height).toBe(frames.box.h * 6);
+    expect(duck[0].smoothing).toBe(false);
+    // Still the piece, still animated.
+    expect(duck[0].pixels.some((p) => p !== null)).toBe(true);
+    expect(JSON.stringify(duck[0].pixels)).not.toBe(JSON.stringify(duck[1].pixels));
+  });
+});
+
+describe("sprite.js — the flyer", () => {
+  it("is built from real alive piece #39, wings 6 and horn 5", () => {
+    expect(String(FLYER_SEED)).toBe(String((alive as Record<string, string>)[String(FLYER_PIECE_ID)]));
+    const [raised] = buildFlyerGrids();
+    expect(raised.meta.wings).toBe(6);
+    expect(raised.meta.horn).toBe(5);
+    expect(FLYER_WING_CYCLE).toEqual([6, 12]);
+  });
+
+  it("flaps between wings 6 and wings 12 and changes nothing else", () => {
+    const [a, b] = buildFlyerGrids();
+    expect(a.meta.wings).toBe(6);
+    expect(b.meta.wings).toBe(12);
+    const { wings: _aw, ...restA } = a.meta;
+    const { wings: _bw, ...restB } = b.meta;
+    expect(restA).toEqual(restB);
+    // The wing is the only thing that moves, but it really does move.
+    expect(JSON.stringify(a.cells)).not.toBe(JSON.stringify(b.cells));
+  });
+
+  it("carries no ground strip: a creature in flight stands on nothing", () => {
+    for (const g of buildFlyerGrids()) expect(g.meta.ground).toBe(0);
+  });
+
+  it("paints every cell black but the eye, which stays light", () => {
+    const grids = buildFlyerGrids();
+    let eyes = 0;
+    for (const g of grids) {
+      const cells = shadowCells(g);
+      for (const row of cells) {
+        for (const c of row) {
+          if (c === null) continue;
+          expect([FLYER_INK, FLYER_EYE]).toContain(c);
+          if (c === FLYER_EYE) eyes++;
+        }
+      }
+    }
+    // The eye is what gives the silhouette presence; it must actually be there.
+    expect(eyes).toBeGreaterThan(0);
+    expect(FLYER_INK).toBe("#0b0b0d");
+  });
+
+  it("keeps its two sentinel colours distinct from each other and the backdrop", () => {
+    const [g] = buildFlyerGrids();
+    const ink = UPEG_COLORS[32];
+    const eye = UPEG_COLORS[35];
+    expect(ink).not.toBe(eye);
+    expect(UPEG_BACKGROUND_COLORS).not.toContain(ink);
+    expect(UPEG_BACKGROUND_COLORS).not.toContain(eye);
+    expect(g.bg).not.toBe(ink);
+    expect(g.bg).not.toBe(eye);
+  });
+
+  it("mirrors exactly — it flies at the runner, not away from it", () => {
+    expect(mirrorCells([["a", "b", "c"], [null, "d", null]])).toEqual([
+      ["c", "b", "a"],
+      [null, "d", null],
+    ]);
+    // The source piece faces right (its horn is up and to the right); the
+    // flyer's eye must therefore end up on its left.
+    const [g] = buildFlyerGrids();
+    const eyeX = (cells: (string | null)[][]) => {
+      for (let y = 0; y < cells.length; y++) {
+        for (let x = 0; x < cells[y].length; x++) if (cells[y][x] === FLYER_EYE) return x;
+      }
+      return -1;
+    };
+    const before = eyeX(shadowCells(g));
+    const after = eyeX(mirrorCells(shadowCells(g)));
+    expect(before).toBeGreaterThan(12);
+    expect(after).toBeLessThan(12);
+  });
+
+  it("renders two same-size frames at an integer scale", () => {
+    const fly = buildFlyerFrames({ scale: 6 }) as unknown as FakeCanvas[] & {
+      cellPx: number;
+      style: string;
+      box: { w: number; h: number };
+    };
+    expect(fly).toHaveLength(2);
+    expect(fly.style).toBe("wing-flap");
+    expect(fly.cellPx).toBe(6);
+    expect(fly[0].width).toBe(fly[1].width);
+    expect(fly[0].height).toBe(fly[1].height);
+    expect(fly[0].height).toBe(fly.box.h * 6);
+    expect(fly[0].smoothing).toBe(false);
+    expect(JSON.stringify(fly[0].pixels)).not.toBe(JSON.stringify(fly[1].pixels));
+    // Transparent around it, and not one pixel of any colour but ink and eye.
+    expect(fly[0].pixels.some((p) => p === null)).toBe(true);
+    for (const p of fly[0].pixels) if (p !== null) expect([FLYER_INK, FLYER_EYE]).toContain(p);
+  });
+
+  it("is scaled down from the runner, but never below 1x", () => {
+    for (let s = 1; s <= 16; s++) {
+      const f = flyerScaleFor(s);
+      expect(Number.isInteger(f)).toBe(true);
+      expect(f).toBeGreaterThanOrEqual(1);
+      expect(f).toBeLessThanOrEqual(s);
+    }
+    expect(flyerScaleFor(4)).toBe(3);
+    expect(flyerScaleFor(8)).toBe(6);
+  });
+
+  it("rides along on the run frames too", () => {
+    const frames = buildRunFrames(gridFromSeed(SEED), { scale: 4 }) as unknown as FakeCanvas[] & {
+      flyer: FakeCanvas[] & { cellPx: number };
+    };
+    expect(frames.flyer).toHaveLength(2);
+    expect(frames.flyer.cellPx).toBe(3);
   });
 });
 

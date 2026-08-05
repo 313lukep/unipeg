@@ -354,7 +354,7 @@ input[type="number"]::-webkit-inner-spin-button {
 }
 
 .pick .display {
-  color: var(--mute);
+  color: var(--ink);
   font-size: clamp(26px, 4.4vw, 38px);
 }
 

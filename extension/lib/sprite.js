@@ -7,7 +7,7 @@
  * scale, so the art stays exactly as the chain drew it.
  */
 
-import { GRID_SIZE, gridFromSeed } from "./upeg.js";
+import { GRID_SIZE, UPEG_COLORS, decodeSeed, gridFromMetadata, gridFromSeed } from "./upeg.js";
 
 /**
  * THE RUN CYCLE.
@@ -33,6 +33,126 @@ export const RUN_CYCLE = [
 
 /** Default integer upscale: 24 cells x 4 = 96px tall before trimming. */
 export const DEFAULT_SCALE = 4;
+
+/**
+ * THE CROUCH.
+ *
+ * Ducking re-renders the same run cycle at a SMALLER INTEGER SCALE, not a
+ * squashed blit: 4x becomes 3x, 8x becomes 6x. Every cell is still a whole
+ * number of device pixels, so the crouched unicorn is exactly as crisp as the
+ * standing one — a fractional squash would smear it, which is the one thing
+ * this codebase does not do.
+ *
+ * Three quarters is the only ratio that stays integral at both of the scales
+ * the page actually uses (4 and 8), and it leaves the duck comfortably under
+ * the low flyer while still being a big enough target to be hit by everything
+ * else.
+ */
+export const DUCK_RATIO = 3 / 4;
+
+/**
+ * Run scale -> duck scale. Rounds DOWN, so the ratio is never above 3/4 at any
+ * scale: an odd scale that rounded up would give the game a crouch barely
+ * smaller than the stand, and the flyer lanes are built on this bound.
+ */
+export function duckScaleFor(scale) {
+  return Math.max(1, Math.floor(Math.max(1, scale) * DUCK_RATIO));
+}
+
+/* ------------------------------------------------------------- the flyer */
+
+/**
+ * THE FLYER — an all-black winged Unipeg, this game's pterodactyl.
+ *
+ * Built from a REAL alive piece: #39, which ships wings variant 6 and horn 5.
+ * Its seed is a verbatim copy of `data/upeg-alive.json`'s entry for id 39 (the
+ * test asserts the two never drift apart), so the creature is a genuine piece
+ * rather than invented art.
+ *
+ * Every painted cell is forced to one near-black, which turns the piece into a
+ * silhouette: a shadow of a unicorn rather than a second unicorn. The eyes are
+ * the single exception — left light so the creature reads as alive and aimed at
+ * you. Punching the eye out to transparent would have been invisible instead:
+ * the page's own paper is the same near-black.
+ *
+ * FLAP: wings 6 (raised) alternating with wings 12 (extended), body, horn,
+ * tail and legs identical between the two frames. Verified by rendering both
+ * frames and looking at them.
+ */
+export const FLYER_PIECE_ID = 39;
+export const FLYER_SEED = 1927359419702180163628542380460131660334337n;
+export const FLYER_WING_CYCLE = [6, 12];
+export const FLYER_INK = "#0b0b0d";
+export const FLYER_EYE = "#f7f7f8";
+/** Flyer scale relative to the runner's. Integer at both page scales (4, 8). */
+export const FLYER_RATIO = 3 / 4;
+
+/** Rounds down for the same reason duckScaleFor does. */
+export function flyerScaleFor(scale) {
+  return Math.max(1, Math.floor(Math.max(1, scale) * FLYER_RATIO));
+}
+
+/**
+ * Two palette slots used purely as tags: every layer is painted with
+ * SENTINEL_INK and only the eyes with SENTINEL_EYE, so the two can be told
+ * apart afterwards without guessing at colours. They must be distinct, and
+ * distinct from the piece's background (the test pins all three).
+ */
+const SENTINEL_INK = 32; // #1e1e26
+const SENTINEL_EYE = 35; // #00ffd0
+
+/** The two flap grids: identical but for the wing variant. */
+export function buildFlyerGrids() {
+  const meta = decodeSeed(FLYER_SEED);
+  const base = {
+    ...meta,
+    // A creature in flight carries no ground strip.
+    ground: 0,
+    bodyColor: SENTINEL_INK,
+    hairColor: SENTINEL_INK,
+    hornColor: SENTINEL_INK,
+    groundColor: SENTINEL_INK,
+    accessoriesColor: SENTINEL_INK,
+    tailColor: SENTINEL_INK,
+    eyesColor: SENTINEL_EYE,
+  };
+  return FLYER_WING_CYCLE.map((wings) => gridFromMetadata({ ...base, wings }));
+}
+
+/** Background -> transparent, every painted cell -> black, eyes -> light. */
+export function shadowCells(grid) {
+  const eye = UPEG_COLORS[SENTINEL_EYE % UPEG_COLORS.length];
+  return grid.cells.map((row) =>
+    row.map((c) => (c === grid.bg ? null : c === eye ? FLYER_EYE : FLYER_INK)),
+  );
+}
+
+/** Mirror a cell grid left-to-right. Exact: pixel art, reversed rows. */
+export function mirrorCells(cells) {
+  return cells.map((row) => row.slice().reverse());
+}
+
+/**
+ * Build the flyer's two flap frames, mirrored so it faces the runner it is
+ * flying at. Same-size canvases sharing one box, so the wingbeat never shifts
+ * the body. Returns an array carrying `.cellPx` and `.box`.
+ */
+export function buildFlyerFrames(options = {}) {
+  const scale = Math.max(1, Math.round(options.scale || DEFAULT_SCALE));
+  const keyed = buildFlyerGrids().map((g) => mirrorCells(shadowCells(g)));
+  const box = runCycleBounds(keyed);
+  const frames = !box
+    ? []
+    : keyed.map((cells) => {
+        const canvas = createCanvas(box.w * scale, box.h * scale);
+        drawKeyedCells(pixelContext(canvas), cells, box, scale, 0, 0, 0);
+        return canvas;
+      });
+  frames.cellPx = scale;
+  frames.box = box;
+  frames.style = "wing-flap";
+  return frames;
+}
 
 /**
  * Grids for the run cycle. Needs `grid.meta` (gridFromSeed supplies it); given
@@ -208,10 +328,28 @@ export function buildRunFrames(grid, options = {}) {
   const box = runCycleBounds(keyedFrames);
   if (!box) return withMeta([], scale, null, bobbing);
 
+  const frames = renderCycle(keyedFrames, bobFrames, box, scale, bobbing);
+  withMeta(frames, scale, box, bobbing);
+
+  // The game needs three sprite sets and only ever receives one array, so the
+  // other two ride along on it. Both are built here rather than in the game so
+  // every scale decision stays in one file, next to the integer-scale rule.
+  const duckScale = duckScaleFor(scale);
+  frames.duck = withMeta(
+    renderCycle(keyedFrames, bobFrames, box, duckScale, bobbing),
+    duckScale,
+    box,
+    bobbing,
+  );
+  frames.flyer = buildFlyerFrames({ scale: flyerScaleFor(scale) });
+  return frames;
+}
+
+/** Paint one cycle's keyed frames into same-size canvases at `scale`. */
+function renderCycle(keyedFrames, bobFrames, box, scale, bobbing) {
   const width = box.w * scale;
   const height = (box.h + (bobbing ? 1 : 0)) * scale;
-
-  const frames = bobFrames.map((bob, i) => {
+  return bobFrames.map((bob, i) => {
     const canvas = createCanvas(width, height);
     const ctx = pixelContext(canvas);
     const keyed = keyedFrames[Math.min(i, keyedFrames.length - 1)];
@@ -220,8 +358,6 @@ export function buildRunFrames(grid, options = {}) {
     drawKeyedCells(ctx, keyed, box, scale, 0, 0, bobbing ? bob + 1 : 0);
     return canvas;
   });
-
-  return withMeta(frames, scale, box, bobbing);
 }
 
 function withMeta(frames, cellPx, box, bobbing) {
