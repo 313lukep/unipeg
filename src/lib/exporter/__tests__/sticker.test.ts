@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { makeGrid, recomputePalette } from "@/lib/grid/grid";
+import { gridsEqual, makeGrid, recomputePalette } from "@/lib/grid/grid";
+import { GridValidationError } from "@/lib/grid/types";
 import type { Grid } from "@/lib/grid/types";
 import {
   buildStickerGrid,
@@ -409,6 +410,207 @@ describe("renderStickerLayer", () => {
     }, target);
     expect(Math.max(outW, outH)).toBeLessThanOrEqual(Math.ceil(baseOpts.scale * target));
     expect(cellPx).toBeGreaterThan(0);
+  });
+});
+
+describe("highlight mask mode", () => {
+  const STRAY = "#22cc44";
+  const STRAY_RGBA = [0x22, 0xcc, 0x44, 255];
+
+  /** key helper mirroring the shared contract: `${x},${y}` in whole-grid cells */
+  const k = (x: number, y: number) => `${x},${y}`;
+
+  /**
+   * 24x24, bg #ffecf5, 3x3 body block at (10,4)..(12,6) with a STRAY-coloured
+   * cell at (12,6) — the corner an L-shaped highlight leaves out.
+   */
+  function strayGrid(): Grid {
+    const g = makeGrid(24, 24, "#ffecf5");
+    for (let y = 4; y < 7; y++) for (let x = 10; x < 13; x++) g.cells[y][x] = "#aa3355";
+    g.cells[6][12] = STRAY;
+    return recomputePalette(g);
+  }
+
+  /** the 3x3 block minus its stray corner — an L (well, a 3x3 with a bite) */
+  function lMask(): Set<string> {
+    const m = new Set<string>();
+    for (let y = 4; y < 7; y++) for (let x = 10; x < 13; x++) m.add(k(x, y));
+    m.delete(k(12, 6));
+    return m;
+  }
+
+  /** a deliberately WRONG rect — mask mode must ignore it entirely */
+  const WRONG_SEL = { x: 0, y: 16, w: 4, h: 4 };
+
+  it("crops to the MASK's bbox, not to sel", () => {
+    // 2x2 of the head at (10,4): three body cells plus the eye at (11,5)
+    const mask = new Set([k(10, 4), k(11, 4), k(10, 5), k(11, 5)]);
+    const out = buildStickerGrid(pieceGrid(), WRONG_SEL, mask);
+    expect(out.w).toBe(2);
+    expect(out.h).toBe(2);
+    expect(out.cells).toEqual([
+      ["#aa3355", "#aa3355"],
+      ["#aa3355", "#111111"],
+    ]);
+  });
+
+  it("leaves unmasked cells inside the bbox transparent", () => {
+    // two opposite corners of the head -> 4x4 bbox, only the corners painted
+    const mask = new Set([k(10, 4), k(13, 7)]);
+    const out = buildStickerGrid(pieceGrid(), WRONG_SEL, mask);
+    expect(out.w).toBe(4);
+    expect(out.h).toBe(4);
+    for (let y = 0; y < 4; y++) {
+      for (let x = 0; x < 4; x++) {
+        const painted = (x === 0 && y === 0) || (x === 3 && y === 3);
+        expect(out.cells[y][x], `cell (${x},${y})`).toBe(painted ? "#aa3355" : null);
+      }
+    }
+  });
+
+  it("keys out highlighted cells that are the background colour", () => {
+    // (9,4) is background; highlighting it must still drop out, as in box mode
+    const mask = new Set([k(9, 4), k(10, 4), k(11, 4)]);
+    const out = buildStickerGrid(pieceGrid(), WRONG_SEL, mask);
+    expect(out.w).toBe(3);
+    expect(out.cells[0]).toEqual([null, "#aa3355", "#aa3355"]);
+    expect(out.palette).not.toContain("#ffecf5");
+  });
+
+  it("an L-shaped mask survives end-to-end: painted colours in, unmasked colour out", () => {
+    const grid = strayGrid();
+    const built = buildStickerGrid(grid, WRONG_SEL, lMask());
+    expect(built.w).toBe(3);
+    expect(built.h).toBe(3);
+    expect(built.cells[2][2]).toBeNull(); // the bitten corner
+    expect(built.palette).toEqual(["#aa3355"]);
+
+    const target = 240;
+    const { data } = renderStickerLayer(
+      grid,
+      WRONG_SEL,
+      { ...baseOpts, rotationDeg: -22 },
+      target,
+      lMask(),
+    );
+    expect(countColour(data, BODY)).toBeGreaterThan(0);
+    expect(countColour(data, WHITE)).toBeGreaterThan(0); // outline still drawn
+    expect(countColour(data, STRAY_RGBA)).toBe(0); // unmasked colour never enters
+  });
+
+  it("throws GridValidationError('highlight at least one pixel') for an empty mask", () => {
+    expect(() => buildStickerGrid(pieceGrid(), SEL, new Set<string>())).toThrow(GridValidationError);
+    try {
+      buildStickerGrid(pieceGrid(), SEL, new Set<string>());
+      throw new Error("expected a throw");
+    } catch (e) {
+      expect(e).toBeInstanceOf(GridValidationError);
+      expect((e as GridValidationError).reason).toBe("highlight at least one pixel");
+    }
+  });
+
+  it("silently ignores out-of-bounds and malformed keys", () => {
+    const mask = new Set([
+      k(-1, 4),
+      k(24, 4),
+      k(10, 99),
+      "not-a-key",
+      "1,2,3",
+      "",
+      k(10, 4),
+      k(11, 4),
+    ]);
+    const out = buildStickerGrid(pieceGrid(), WRONG_SEL, mask);
+    expect(out.w).toBe(2);
+    expect(out.h).toBe(1);
+    expect(out.cells).toEqual([["#aa3355", "#aa3355"]]);
+  });
+
+  it("throws the same reason when EVERY key is out of bounds", () => {
+    const mask = new Set([k(-1, -1), k(24, 0), k(0, 24), k(999, 999)]);
+    try {
+      buildStickerGrid(pieceGrid(), SEL, mask);
+      throw new Error("expected a throw");
+    } catch (e) {
+      expect(e).toBeInstanceOf(GridValidationError);
+      expect((e as GridValidationError).reason).toBe("highlight at least one pixel");
+    }
+  });
+
+  it("a mask covering sel exactly reproduces box mode byte for byte", () => {
+    const grid = pieceGrid();
+    const full = new Set<string>();
+    for (let y = SEL.y; y < SEL.y + SEL.h; y++)
+      for (let x = SEL.x; x < SEL.x + SEL.w; x++) full.add(k(x, y));
+    const box = buildStickerGrid(grid, SEL);
+    const masked = buildStickerGrid(grid, SEL, full);
+    expect(masked.w).toBe(box.w);
+    expect(masked.h).toBe(box.h);
+    expect(gridsEqual(masked, box)).toBe(true);
+    expect(masked.cells).toEqual(box.cells);
+    expect(masked.palette).toEqual(box.palette);
+
+    // and the whole render agrees, pixel for pixel
+    const a = renderStickerLayer(grid, SEL, baseOpts, 200);
+    const b = renderStickerLayer(grid, WRONG_SEL, baseOpts, 200, full);
+    expect(b.cellPx).toBe(a.cellPx);
+    expect([...b.data]).toEqual([...a.data]);
+  });
+
+  it("tilt-invariant sizing still holds with a mask", () => {
+    const grid = strayGrid();
+    const target = 1000;
+    const layers = [0, -22, 45].map((deg) =>
+      renderStickerLayer(grid, WRONG_SEL, { ...baseOpts, rotationDeg: deg }, target, lMask()),
+    );
+    const [r0, r22, r45] = layers;
+    expect(r22.cellPx).toBe(r0.cellPx);
+    expect(r45.cellPx).toBe(r0.cellPx);
+    const c0 = countColour(r0.data, BODY);
+    expect(c0).toBeGreaterThan(0);
+    for (const [deg, layer] of [[-22, r22], [45, r45]] as const) {
+      const c = countColour(layer.data, BODY);
+      expect(Math.abs(c - c0) / c0, `deg=${deg}`).toBeLessThan(0.02);
+    }
+  });
+
+  it("rotated masked output stays blend-free (zero AA pixels)", () => {
+    const target = 240;
+    const { data } = renderStickerLayer(
+      strayGrid(),
+      WRONG_SEL,
+      { ...baseOpts, twoTone: true, rotationDeg: -22 },
+      target,
+      lMask(),
+    );
+    const allowed = new Set([
+      BODY.join(","),
+      WHITE.join(","),
+      BLACK.join(","), // two-tone band: opposite of the white outline
+      CLEAR.join(","),
+    ]);
+    for (let i = 0; i < data.length; i += 4) {
+      const key = `${data[i]},${data[i + 1]},${data[i + 2]},${data[i + 3]}`;
+      if (!allowed.has(key)) throw new Error(`unexpected colour ${key}`);
+    }
+  });
+
+  it("resolveStickerBackground 'tint' reads the masked cutout, box mode unchanged", () => {
+    const grid = strayGrid();
+    // a mask over STRAY only vs a mask over BODY only must tint differently
+    const strayOnly = resolveStickerBackground(grid, WRONG_SEL, baseOpts, new Set([k(12, 6)]));
+    const bodyOnly = resolveStickerBackground(grid, WRONG_SEL, baseOpts, new Set([k(10, 4)]));
+    expect(strayOnly).toMatch(/^#[0-9a-f]{6}$/);
+    expect(bodyOnly).toMatch(/^#[0-9a-f]{6}$/);
+    expect(strayOnly).not.toBe(bodyOnly);
+    // omitting the mask keeps the old rectangular behaviour exactly
+    expect(resolveStickerBackground(grid, SEL, baseOpts, null)).toBe(
+      resolveStickerBackground(grid, SEL, baseOpts),
+    );
+    // an unusable mask falls back instead of throwing
+    expect(
+      resolveStickerBackground(grid, SEL, baseOpts, new Set<string>()),
+    ).toMatch(/^#[0-9a-f]{6}$/);
   });
 });
 

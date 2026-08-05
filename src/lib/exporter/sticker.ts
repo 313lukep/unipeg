@@ -478,7 +478,7 @@ export function renderStickerLayer(
       `renderStickerLayer: targetPx must be a positive integer, got ${targetPx}`,
     );
   }
-  const sticker = buildStickerGrid(grid, sel);
+  const sticker = buildStickerGrid(grid, sel, mask);
   const ow = normaliseOutlineWidth(opts.outlineWidth);
   const outlineColour = normaliseOutlineColour(opts.outlineColour);
   const twoTone = opts.twoTone && ow > 0;
@@ -545,18 +545,22 @@ function withAlpha(hex: string, alpha: number): string {
 /**
  * Full compose to an HTMLCanvasElement of targetPx x targetPx. Browser only.
  * Used at low targetPx for live previews and at opts.size for export.
+ *
+ * Pass a non-null `mask` for HIGHLIGHT mode (per-pixel painted selection);
+ * omit it (or pass null) for the unchanged rectangular BOX mode.
  */
 export function composeStickerCanvas(
   grid: Grid,
   sel: CellRect,
   opts: StickerOpts,
   targetPx: number,
+  mask?: CellMask | null,
 ): HTMLCanvasElement {
   if (typeof document === "undefined") {
     throw new GridValidationError("composeStickerCanvas requires a browser environment");
   }
-  // Pure pipeline: crop/keyOut -> raster -> raster outline -> NN rotation.
-  const { data } = renderStickerLayer(grid, sel, opts, targetPx);
+  // Pure pipeline: crop/[mask]/keyOut -> raster -> raster outline -> NN rotation.
+  const { data } = renderStickerLayer(grid, sel, opts, targetPx, mask);
 
   const canvas = document.createElement("canvas");
   canvas.width = targetPx;
@@ -567,7 +571,7 @@ export function composeStickerCanvas(
   ctx.imageSmoothingEnabled = false;
 
   // Background first.
-  const bgColour = resolveStickerBackground(grid, sel, opts);
+  const bgColour = resolveStickerBackground(grid, sel, opts, mask);
   ctx.fillStyle = bgColour;
   ctx.fillRect(0, 0, targetPx, targetPx);
 
@@ -600,9 +604,17 @@ export function composeStickerCanvas(
   return canvas;
 }
 
-/** Full pipeline to a PNG blob at opts.size x opts.size. */
-export function exportSticker(grid: Grid, sel: CellRect, opts: StickerOpts): Promise<Blob> {
-  const canvas = composeStickerCanvas(grid, sel, opts, opts.size);
+/**
+ * Full pipeline to a PNG blob at opts.size x opts.size. Pass a non-null `mask`
+ * to export the painted highlight selection instead of the rectangle.
+ */
+export function exportSticker(
+  grid: Grid,
+  sel: CellRect,
+  opts: StickerOpts,
+  mask?: CellMask | null,
+): Promise<Blob> {
+  const canvas = composeStickerCanvas(grid, sel, opts, opts.size, mask);
   return new Promise<Blob>((resolve, reject) => {
     canvas.toBlob((blob) => {
       if (blob) resolve(blob);
