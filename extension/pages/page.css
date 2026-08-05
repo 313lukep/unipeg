@@ -1,0 +1,462 @@
+/* unipegPFP — Offline Unipeg · shared page styles for offline.html + newtab.html.
+   Dark-committed on purpose: both pages stand in for Chrome's own dark, calm
+   error/new-tab surfaces. Tokens mirror docs/DESIGN.md (dark column). */
+
+:root {
+  color-scheme: dark;
+
+  --paper: #0b0b0d;
+  --ink: #f7f7f8;
+  --pink: #ff4da1;
+  --mute: #9c9ca6;
+  --card: #161619;
+  --line: #232326;
+  --wash: #231219;
+
+  --mono: "Space Mono", ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas,
+    "Liberation Mono", monospace;
+  --sans: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial,
+    sans-serif;
+
+  --gap: 24px;
+  --radius: 12px;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--sans);
+  font-size: 15px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  overflow: hidden;
+}
+
+canvas {
+  display: block;
+  image-rendering: pixelated;
+}
+
+/* ── shell ─────────────────────────────────────────────────────────────── */
+
+.page {
+  min-height: 100%;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: var(--gap);
+  max-width: 880px;
+  margin: 0 auto;
+  padding: 32px 24px;
+}
+
+/* ── header ────────────────────────────────────────────────────────────── */
+
+.head {
+  display: flex;
+  align-items: center;
+  gap: 28px;
+}
+
+.plate {
+  flex: none;
+  background: var(--card);
+  border-radius: var(--radius);
+  padding: 12px;
+  line-height: 0;
+}
+
+.plate canvas {
+  border-radius: 4px;
+}
+
+.headtext {
+  min-width: 0;
+  flex: 1;
+}
+
+.micro {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--pink);
+  margin: 0 0 10px;
+}
+
+.micro.passive {
+  color: var(--mute);
+}
+
+.display {
+  font-family: var(--sans);
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  font-size: clamp(30px, 5.2vw, 48px);
+  line-height: 1.05;
+  margin: 0;
+}
+
+.display.num {
+  font-family: var(--mono);
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  font-size: clamp(34px, 6.4vw, 64px);
+}
+
+.display .hash {
+  color: var(--pink);
+  font-size: 0.6em;
+  vertical-align: 0.42em;
+  margin-right: 0.04em;
+}
+
+.sub {
+  color: var(--mute);
+  margin: 12px 0 0;
+  max-width: 46ch;
+}
+
+.mono {
+  font-family: var(--mono);
+}
+
+.host {
+  font-family: var(--mono);
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  margin-top: 20px;
+}
+
+/* ── controls ──────────────────────────────────────────────────────────── */
+
+button,
+input,
+select {
+  font: inherit;
+  color: inherit;
+}
+
+.btn {
+  appearance: none;
+  border: 1px solid var(--line);
+  background: transparent;
+  color: var(--ink);
+  border-radius: 999px;
+  padding: 10px 20px;
+  min-height: 44px;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+.btn:hover {
+  border-color: var(--mute);
+}
+
+.btn.solid {
+  background: var(--ink);
+  border-color: var(--ink);
+  color: var(--paper);
+}
+
+.btn.solid:hover {
+  background: #fff;
+}
+
+.btn.quiet {
+  border-color: transparent;
+  color: var(--mute);
+  padding: 10px 12px;
+}
+
+.btn.quiet:hover {
+  color: var(--ink);
+  border-color: var(--line);
+}
+
+/* Square focus rings even on round pills — a cell-boundary tell. */
+:focus-visible {
+  outline: 2px solid var(--pink);
+  outline-offset: 2px;
+  border-radius: 0;
+}
+
+input[type="number"] {
+  appearance: textfield;
+  -moz-appearance: textfield;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 10px 14px;
+  min-height: 44px;
+  width: 10ch;
+  font-family: var(--mono);
+  font-size: 16px;
+}
+
+input[type="number"]::-webkit-outer-spin-button,
+input[type="number"]::-webkit-inner-spin-button {
+  appearance: none;
+  margin: 0;
+}
+
+.switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.switch input {
+  position: absolute;
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+/* Two ink cells / two paper cells — a 2x2 pixel glyph, not a toggle track. */
+.switch .glyph {
+  flex: none;
+  width: 24px;
+  height: 24px;
+  border: 1px solid var(--line);
+  background: var(--card);
+  display: grid;
+  grid-template: repeat(2, 1fr) / repeat(2, 1fr);
+}
+
+.switch .glyph i {
+  background: transparent;
+}
+
+.switch input:checked + .glyph {
+  border-color: var(--pink);
+}
+
+.switch input:checked + .glyph i:nth-child(1),
+.switch input:checked + .glyph i:nth-child(4) {
+  background: var(--pink);
+}
+
+.switch input:focus-visible + .glyph {
+  outline: 2px solid var(--pink);
+  outline-offset: 2px;
+}
+
+/* ── stage ─────────────────────────────────────────────────────────────── */
+
+.stage {
+  position: relative;
+  background: var(--card);
+  border-radius: var(--radius);
+  overflow: hidden;
+  height: clamp(168px, 30vh, 248px);
+}
+
+.stage canvas {
+  width: 100%;
+  height: 100%;
+  cursor: pointer;
+}
+
+.stage:focus-within {
+  outline: 2px solid var(--pink);
+  outline-offset: 2px;
+}
+
+.stagehint {
+  position: absolute;
+  inset: auto 0 12px;
+  text-align: center;
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--mute);
+  pointer-events: none;
+}
+
+/* ── footer ────────────────────────────────────────────────────────────── */
+
+.foot {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+  font-family: var(--mono);
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--mute);
+  border-top: 1px solid var(--line);
+  padding-top: 14px;
+}
+
+.foot .spacer {
+  flex: 1;
+}
+
+.foot b {
+  color: var(--ink);
+  font-weight: 700;
+}
+
+.foot a {
+  color: var(--mute);
+  text-decoration: none;
+  border-bottom: 1px solid var(--line);
+}
+
+.foot a:hover {
+  color: var(--pink);
+  border-bottom-color: var(--pink);
+}
+
+/* ── first run / notices ───────────────────────────────────────────────── */
+
+.pick {
+  background: var(--card);
+  border-radius: var(--radius);
+  padding: 28px 24px;
+}
+
+.pick .display {
+  color: var(--mute);
+  font-size: clamp(26px, 4.4vw, 38px);
+}
+
+.pickform {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 20px;
+}
+
+.note {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--mute);
+  margin-top: 14px;
+  letter-spacing: 0.04em;
+}
+
+.note.bad {
+  color: var(--ink);
+  border-left: 2px solid var(--pink);
+  padding-left: 10px;
+}
+
+/* Minimal state when the new tab takeover is switched off. */
+.off {
+  text-align: center;
+  color: var(--mute);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 20px;
+}
+
+/* ── settings dialog ───────────────────────────────────────────────────── */
+
+dialog {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--paper);
+  color: var(--ink);
+  padding: 24px;
+  width: min(420px, calc(100vw - 32px));
+}
+
+dialog::backdrop {
+  background: rgb(0 0 0 / 0.6);
+}
+
+dialog h2 {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--pink);
+  margin: 0 0 18px;
+}
+
+.field {
+  display: block;
+  margin-bottom: 20px;
+}
+
+.field .label {
+  display: block;
+  font-size: 13px;
+  font-weight: 600;
+  margin-bottom: 8px;
+}
+
+.field .help {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--mute);
+  margin-top: 8px;
+  line-height: 1.5;
+}
+
+.dialogfoot {
+  display: flex;
+  gap: 12px;
+  justify-content: flex-end;
+  margin-top: 24px;
+}
+
+[hidden] {
+  display: none !important;
+}
+
+/* ── small screens ─────────────────────────────────────────────────────── */
+
+@media (max-width: 560px) {
+  .page {
+    padding: 20px 16px;
+    gap: 18px;
+  }
+
+  .head {
+    gap: 18px;
+  }
+
+  .stage {
+    height: clamp(150px, 26vh, 200px);
+  }
+
+  .foot {
+    font-size: 11px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+}

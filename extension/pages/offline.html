@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Offline — unipegPFP</title>
+    <link rel="icon" href="../icons/icon16.png" />
+    <link rel="stylesheet" href="page.css" />
+  </head>
+  <body data-mode="offline">
+    <div class="page">
+      <!-- header block: the only part that differs from newtab.html -->
+      <header class="head">
+        <div class="plate">
+          <canvas id="portrait" width="96" height="96" role="img" aria-label="Your Unipeg"></canvas>
+        </div>
+        <div class="headtext">
+          <p class="micro">Offline</p>
+          <h1 class="display">You&rsquo;re offline</h1>
+          <p class="sub">
+            <span class="host" id="host">This page</span> couldn&rsquo;t be reached. Your Unipeg
+            doesn&rsquo;t mind &mdash; it&rsquo;s drawn from data inside the extension.
+          </p>
+          <div class="actions">
+            <button type="button" id="retry" class="btn solid">Retry</button>
+            <span class="mono" id="pieceChip" aria-live="polite"></span>
+          </div>
+        </div>
+      </header>
+
+      <!-- shared block — keep byte-identical with newtab.html apart from the footer link -->
+      <section id="pick" class="pick" hidden>
+        <p class="micro passive">First run</p>
+        <h2 class="display">Pick your peg</h2>
+        <form class="pickform" id="pickForm">
+          <input
+            type="number"
+            id="pickInput"
+            min="1"
+            max="400000"
+            step="1"
+            inputmode="numeric"
+            placeholder="185206"
+            aria-label="Unipeg piece number"
+            required
+          />
+          <button type="submit" class="btn solid">Save</button>
+          <button type="button" id="pickMascot" class="btn">Use #185206</button>
+        </form>
+        <p class="note" id="pickNote">Any alive piece, 1 to 400000. Rendered locally, offline.</p>
+      </section>
+
+      <section id="offState" class="off" hidden>
+        <p class="micro passive">Takeover off</p>
+        <p class="mono">Unipeg new tab is off.</p>
+        <button type="button" id="enableBtn" class="btn solid">Turn it back on</button>
+      </section>
+
+      <section id="stage" class="stage" hidden>
+        <canvas id="run" tabindex="0" role="application" aria-label="Unipeg runner — press space or up arrow to jump"></canvas>
+        <p class="stagehint" id="stagehint" hidden></p>
+      </section>
+
+      <footer id="foot" class="foot" hidden>
+        <span>Score <b id="score">0</b></span>
+        <span>Best <b id="best">0</b></span>
+        <span class="spacer"></span>
+        <button type="button" id="settingsBtn" class="btn quiet">Settings</button>
+      </footer>
+    </div>
+
+    <dialog id="settings">
+      <h2>Settings</h2>
+      <form method="dialog" id="settingsForm">
+        <label class="field">
+          <span class="label">Piece number</span>
+          <input
+            type="number"
+            id="setPiece"
+            min="1"
+            max="400000"
+            step="1"
+            inputmode="numeric"
+            required
+          />
+          <span class="help" id="setNote"></span>
+        </label>
+        <div class="field">
+          <span class="label">New tab takeover</span>
+          <label class="switch">
+            <input type="checkbox" id="setNewtab" />
+            <span class="glyph" aria-hidden="true"><i></i><i></i><i></i><i></i></span>
+            <span>Show my Unipeg on every new tab</span>
+          </label>
+          <span class="help">
+            Chrome keeps the new tab assigned to this extension until you disable or remove it,
+            so switching this off shows a blank Unipeg card instead.
+          </span>
+        </div>
+        <div class="dialogfoot">
+          <button type="button" id="setCancel" class="btn quiet">Cancel</button>
+          <button type="submit" class="btn solid">Save</button>
+        </div>
+      </form>
+    </dialog>
+
+    <script type="module" src="page.js"></script>
+  </body>
+</html>
