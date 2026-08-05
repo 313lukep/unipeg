@@ -17,6 +17,16 @@
  * re-rasterise); exports/copy identical. Selection is owned by the page and
  * edited on the main Stage's CropBox; this panel only consumes it.
  *
+ * SELECT MODE. The cutout comes from one of two selections, chosen by the
+ * Select row: BOX (the rectangle, unchanged) or HIGHLIGHT (a per-pixel mask
+ * painted on the stage). The mask is a Set of `${x},${y}` whole-grid cell
+ * keys owned by the page; the engine forwards `highlight ? mask : null` into
+ * every compose/export call, so preview and PNG can never disagree. First
+ * switch to HIGHLIGHT on a piece seeds the mask from the current box, so the
+ * user refines the auto-detected head instead of starting from nothing. An
+ * empty mask is a guard, not a crash: compose is skipped (the last preview
+ * stays up), the exporter's message shows in-palette, export is disabled.
+ *
  * Outline colour is the owner's two-chip rule: WHITE (default) / BLACK.
  * TWO-TONE's band is automatically the opposite colour — no colour choice.
  */
@@ -37,14 +47,24 @@ import {
   exportSticker,
   type StickerOpts,
 } from "@/lib/exporter/sticker";
+import { rectMask } from "@/components/pixelBrushMath";
 import CellSlider from "@/components/ui/CellSlider";
 import MicroLabel from "@/components/ui/MicroLabel";
 import Pill from "@/components/ui/Pill";
+
+/** Which selection drives the cutout: the rectangle or the painted mask. */
+export type SelectMode = "box" | "highlight";
 
 export type StickerProviderProps = {
   grid: Grid;
   pieceId: number | null;
   selection: CellRect;
+  /** page-owned select mode; defaults to box */
+  selectMode?: SelectMode;
+  onSelectModeChange?: (m: SelectMode) => void;
+  /** page-owned highlight mask; null until HIGHLIGHT is first chosen */
+  mask?: ReadonlySet<string> | null;
+  onMaskChange?: (next: ReadonlySet<string>) => void;
   children: ReactNode;
 };
 
@@ -56,6 +76,12 @@ type ExportSize = 400 | 1000 | 2000;
 
 const LOW_RES_PX = 240;
 const DEBOUNCE_MS = 80;
+
+/**
+ * The exporter's own guard message, shown verbatim when HIGHLIGHT is active
+ * with nothing painted (compose is skipped rather than allowed to throw).
+ */
+export const EMPTY_MASK_MESSAGE = "highlight at least one pixel";
 
 const OUTLINE_PILLS: { colour: OutlineColour; label: string }[] = [
   { colour: "#ffffff", label: "WHITE" },
@@ -127,6 +153,10 @@ function useStickerEngine({
   grid,
   pieceId,
   selection,
+  selectMode = "box",
+  onSelectModeChange,
+  mask = null,
+  onMaskChange,
 }: Omit<StickerProviderProps, "children">) {
   // ---- controls state (defaults per spec) --------------------------------
   // Outline is fractional cells (0..1.5 in 1/4-cell steps); owner default 1/2.
@@ -154,6 +184,36 @@ function useStickerEngine({
     },
     [],
   );
+
+  // ---- select mode: box rectangle vs painted highlight mask -------------
+  // The ONE value that reaches the exporter: box mode always passes null, so
+  // a stale mask can never leak into a box-mode cutout.
+  const effectiveMask = selectMode === "highlight" ? mask : null;
+  const maskEmpty = effectiveMask !== null && effectiveMask.size === 0;
+  const maskCount = mask?.size ?? 0;
+
+  const gridW = grid.w;
+  const gridH = grid.h;
+
+  const chooseSelectMode = useCallback(
+    (next: SelectMode) => {
+      // First switch to HIGHLIGHT on this piece seeds from the box rect —
+      // refine the auto-detected head, never start from an empty canvas.
+      if (next === "highlight" && mask === null) {
+        onMaskChange?.(rectMask(selection, gridW, gridH));
+      }
+      onSelectModeChange?.(next);
+    },
+    [mask, onMaskChange, onSelectModeChange, selection, gridW, gridH],
+  );
+
+  const clearMask = useCallback(() => {
+    onMaskChange?.(new Set<string>());
+  }, [onMaskChange]);
+
+  const seedMaskFromBox = useCallback(() => {
+    onMaskChange?.(rectMask(selection, gridW, gridH));
+  }, [onMaskChange, selection, gridW, gridH]);
 
   // ---- drag detection: low-res preview while any pointer is down --------
   const [dragging, setDragging] = useState(false);
@@ -234,6 +294,10 @@ function useStickerEngine({
   const [composedTick, setComposedTick] = useState(0);
   const [composeError, setComposeError] = useState<string | null>(null);
   useEffect(() => {
+    // Empty highlight mask: nothing to compose. Leave the last good preview
+    // on screen (blanking it would punish the user mid-edit) — the guard
+    // message and the disabled export row carry the state instead.
+    if (maskEmpty) return;
     const t = setTimeout(() => {
       try {
         composedRef.current = composeStickerCanvas(
@@ -241,6 +305,7 @@ function useStickerEngine({
           selection,
           visualOpts,
           previewPx,
+          effectiveMask,
         );
         setComposeError(null);
       } catch (err) {
@@ -250,7 +315,7 @@ function useStickerEngine({
       setComposedTick((n) => n + 1);
     }, DEBOUNCE_MS);
     return () => clearTimeout(t);
-  }, [grid, selection, visualOpts, previewPx]);
+  }, [grid, selection, visualOpts, previewPx, effectiveMask, maskEmpty]);
 
   // ---- cheap redraw of the composed canvas (mask toggle costs nothing) ---
   useEffect(() => {
@@ -272,13 +337,15 @@ function useStickerEngine({
   }, []);
 
   const handleDownload = useCallback(async () => {
-    if (busy) return;
+    if (busy || maskEmpty) return;
     setBusy(true);
     try {
-      const blob = await exportSticker(grid, selection, {
-        ...visualOpts,
-        size: exportSize,
-      });
+      const blob = await exportSticker(
+        grid,
+        selection,
+        { ...visualOpts, size: exportSize },
+        effectiveMask,
+      );
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
@@ -292,10 +359,20 @@ function useStickerEngine({
     } finally {
       setBusy(false);
     }
-  }, [busy, grid, selection, visualOpts, filename, exportSize, flash]);
+  }, [
+    busy,
+    maskEmpty,
+    grid,
+    selection,
+    visualOpts,
+    effectiveMask,
+    filename,
+    exportSize,
+    flash,
+  ]);
 
   const handleCopy = useCallback(async () => {
-    if (busy) return;
+    if (busy || maskEmpty) return;
     setBusy(true);
     try {
       if (typeof ClipboardItem === "undefined" || !navigator.clipboard?.write) {
@@ -304,10 +381,12 @@ function useStickerEngine({
       // Pass the promise straight in — awaiting the export first would let
       // Safari's user-gesture window expire before clipboard.write runs.
       const item = new ClipboardItem({
-        "image/png": exportSticker(grid, selection, {
-          ...visualOpts,
-          size: exportSize,
-        }),
+        "image/png": exportSticker(
+          grid,
+          selection,
+          { ...visualOpts, size: exportSize },
+          effectiveMask,
+        ),
       });
       await navigator.clipboard.write([item]);
       flash(setCopyLabel, "COPIED PNG");
@@ -316,10 +395,25 @@ function useStickerEngine({
     } finally {
       setBusy(false);
     }
-  }, [busy, grid, selection, visualOpts, exportSize, flash]);
+  }, [
+    busy,
+    maskEmpty,
+    grid,
+    selection,
+    visualOpts,
+    effectiveMask,
+    exportSize,
+    flash,
+  ]);
 
   return {
     selection,
+    selectMode,
+    chooseSelectMode,
+    maskCount,
+    maskEmpty,
+    clearMask,
+    seedMaskFromBox,
     outlineWidth,
     setOutlineWidth,
     outlineColour,

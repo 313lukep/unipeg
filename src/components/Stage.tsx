@@ -14,18 +14,21 @@
  *    static 40% checker + counter.
  *  - loaded: the grid rasterised crisp (devicePixelRatio-aware, smoothing
  *    off), a 24-step column wipe on entry (.u-wipe-overlay), dashed X-crop
- *    circle in fullbody mode, CropBox overlay in sticker mode.
+ *    circle in fullbody mode, and in sticker mode EITHER the CropBox
+ *    (selectMode 'box') or the PixelBrush (selectMode 'highlight') — the two
+ *    selection tools are mutually exclusive overlays on the same plate.
  *
  * Static chrome (ghost grid, empty state, circle, counter) is positioned in
  * percentages of the plate so it renders server-side; only the canvas and
- * the CropBox need the measured integer cellPx. All geometry stays in whole
- * cells — cellPx is the one device-space conversion.
+ * the selection overlay need the measured integer cellPx. All geometry stays
+ * in whole cells — cellPx is the one device-space conversion.
  */
 
 import { useEffect, useRef, useState } from "react";
 import type { CellRect, Grid } from "@/lib/grid";
 import { rasterise } from "@/lib/grid";
 import CropBox from "@/components/CropBox";
+import PixelBrush from "@/components/PixelBrush";
 
 export type StagePhase = "idle" | "loading" | "loaded" | "error";
 
@@ -37,10 +40,19 @@ export type StageProps = {
   mode: "fullbody" | "sticker";
   selection: CellRect | null;
   onSelectionChange: (r: CellRect) => void;
+  /** sticker selection tool: rectangle (default) or per-pixel brush */
+  selectMode?: "box" | "highlight";
+  /** null = box mode; a set of `${x},${y}` cell keys = highlight mode */
+  mask?: ReadonlySet<string> | null;
+  onMaskChange?: (next: ReadonlySet<string>) => void;
   /** bump to replay the column-wipe theatre (one per successful load) */
   wipeKey: number;
 };
 
+
+/** Stable no-op so PixelBrush's handlers keep their identity when the page
+ *  did not pass a mask setter (box mode / SSR fallbacks). */
+const NO_MASK_CHANGE = () => {};
 
 function useReducedMotion(): boolean {
   const [reduced, setReduced] = useState(false);
@@ -61,6 +73,9 @@ export default function Stage({
   mode,
   selection,
   onSelectionChange,
+  selectMode = "box",
+  mask = null,
+  onMaskChange,
   wipeKey,
 }: StageProps) {
   const cols = grid?.w ?? 24;
@@ -206,17 +221,31 @@ export default function Stage({
               }}
             />
           )}
-          {/* sticker mode: the crop selection, snapped to whole cells */}
-          {loaded && measured && mode === "sticker" && selection !== null && (
-            <CropBox
-              rect={selection}
-              onChange={onSelectionChange}
-              cellPx={cellPx}
-              gridW={cols}
-              gridH={rows}
-              minSize={3}
-            />
-          )}
+          {/* sticker mode: EITHER the cell-snapped crop rectangle or the
+              per-pixel highlight brush — never both */}
+          {loaded &&
+            measured &&
+            mode === "sticker" &&
+            (selectMode === "highlight" && mask !== null ? (
+              <PixelBrush
+                mask={mask}
+                onChange={onMaskChange ?? NO_MASK_CHANGE}
+                cellPx={cellPx}
+                gridW={cols}
+                gridH={rows}
+              />
+            ) : (
+              selection !== null && (
+                <CropBox
+                  rect={selection}
+                  onChange={onSelectionChange}
+                  cellPx={cellPx}
+                  gridW={cols}
+                  gridH={rows}
+                  minSize={3}
+                />
+              )
+            ))}
         </div>
 
       </div>

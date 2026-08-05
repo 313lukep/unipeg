@@ -283,3 +283,38 @@ body {
 .u-cslider-bare > div > div:first-child > label {
   display: none;
 }
+
+/* ------------------------------------------------------------------ */
+/* ADDITIVE — the highlight brush (per-pixel sticker selection).        */
+/* ------------------------------------------------------------------ */
+
+/* The brush layer eats every pointer gesture over the stage: painting
+   must NEVER scroll or pan the page (a drag across the plate used to
+   drag the page sideways on mobile). Selection/callout are killed for
+   the same reason. */
+.u-brush-layer {
+  touch-action: none;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+  cursor: crosshair;
+}
+/* Square focus ring on the cell-boundary lattice, like every other
+   focusable on the page. */
+.u-brush-layer:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* Visually hidden, still announced (the brush's live cell count). */
+.u-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
