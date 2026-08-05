@@ -1,9 +1,21 @@
 /**
  * Head Sticker export pipeline.
  *
+ * TWO SELECTION MODES feed the same pipeline:
+ *
+ *   - BOX mode (mask null/undefined) — the rectangular `sel` is cropped, exactly
+ *     as it always was. Nothing about this path has changed.
+ *   - HIGHLIGHT mode (a non-null CellMask) — the user painted individual whole-
+ *     grid cells. `sel` is then IGNORED: the cutout is the mask's bounding box,
+ *     with every unpainted cell inside that box forced transparent. The mask only
+ *     decides WHICH CELLS ENTER the pipeline; every downstream step (sizing,
+ *     outline, tilt, shadow, background) behaves identically in both modes. The
+ *     outline is a raster dilation of the alpha mask, so it hugs whatever
+ *     silhouette was painted, holes and concavities included.
+ *
  * Order is sacred and matches the build spec exactly:
  *
- *   crop -> keyOut(bg)                       (grid cells, integers)
+ *   crop [-> mask cells out] -> keyOut(bg)   (grid cells, integers)
  *        -> rasterise at integer cellPx, smoothing OFF
  *        -> OUTLINE AT RASTER LEVEL: binary-alpha square-kernel dilation of
  *           radius round(outlineWidth * cellPx) device pixels, filled with
@@ -37,7 +49,51 @@ import {
   dominantBodyColour,
   hexToRgb,
   keyOut,
+  recomputePalette,
 } from "@/lib/grid";
+
+/**
+ * A per-pixel highlight selection: whole-grid cell keys `` `${x},${y}` `` with
+ * INTEGER coordinates in 0..grid.w-1 / 0..grid.h-1.
+ *
+ * `null` (or omitted) everywhere in this module means BOX mode — the
+ * rectangular `sel` is used and behaviour is exactly what it always was. A
+ * non-null mask switches the cutout to HIGHLIGHT mode and `sel` is ignored.
+ */
+export type CellMask = ReadonlySet<string>;
+
+/** Canonical mask key shape; anything else in the set is silently ignored. */
+const MASK_KEY_RE = /^-?\d+,-?\d+$/;
+
+/** Thrown reason when a highlight selection resolves to no usable cells. */
+export const EMPTY_MASK_REASON = "highlight at least one pixel";
+
+/**
+ * Bounding box (in whole-grid cell coordinates) of the mask's cells that
+ * actually land inside the grid. Malformed keys and keys outside the grid are
+ * silently ignored; if nothing usable remains this throws GridValidationError
+ * with reason `"highlight at least one pixel"` so the panel can show it
+ * verbatim.
+ */
+export function maskBounds(grid: Grid, mask: CellMask): CellRect {
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  for (const key of mask) {
+    if (!MASK_KEY_RE.test(key)) continue;
+    const comma = key.indexOf(",");
+    const x = Number(key.slice(0, comma));
+    const y = Number(key.slice(comma + 1));
+    if (x < 0 || y < 0 || x >= grid.w || y >= grid.h) continue;
+    if (x < minX) minX = x;
+    if (x > maxX) maxX = x;
+    if (y < minY) minY = y;
+    if (y > maxY) maxY = y;
+  }
+  if (minX === Infinity) throw new GridValidationError(EMPTY_MASK_REASON);
+  return { x: minX, y: minY, w: maxX - minX + 1, h: maxY - minY + 1 };
+}
 
 export type StickerOpts = {
   /**
@@ -124,28 +180,53 @@ export function normaliseOutlineWidth(w: number): number {
 }
 
 /**
- * Cell-space steps of the pipeline: crop -> keyOut(detected bg). The result
- * is exactly sel.w x sel.h — the outline is no longer a cell-space dilate;
- * it happens at raster level in renderStickerLayer (sub-cell widths).
+ * Cell-space steps of the pipeline: crop -> [mask] -> keyOut(detected bg).
+ * The outline is no longer a cell-space dilate; it happens at raster level in
+ * renderStickerLayer (sub-cell widths).
+ *
+ * BOX mode (`mask` null/undefined): result is exactly sel.w x sel.h.
+ *
+ * HIGHLIGHT mode (non-null `mask`): `sel` is IGNORED. The result is the mask's
+ * bounding box (clamped to the grid; malformed / out-of-bounds keys ignored)
+ * with every cell NOT in the mask set to null, then keyed out against the
+ * piece's detected background — so a highlighted cell that happens to BE the
+ * background colour still drops out, consistent with box mode. A mask with no
+ * usable cells throws GridValidationError("highlight at least one pixel").
  */
-export function buildStickerGrid(grid: Grid, sel: CellRect): Grid {
+export function buildStickerGrid(grid: Grid, sel: CellRect, mask?: CellMask | null): Grid {
   const bg = detectBackground(grid);
-  return keyOut(crop(grid, sel), bg);
+  if (mask === null || mask === undefined) return keyOut(crop(grid, sel), bg);
+  const box = maskBounds(grid, mask);
+  const cropped = crop(grid, box);
+  const cells = cropped.cells.map((row, y) =>
+    row.map((c, x) => (mask.has(`${x + box.x},${y + box.y}`) ? c : null)),
+  );
+  return keyOut(recomputePalette({ w: box.w, h: box.h, cells, palette: [] }), bg);
 }
 
 /**
  * The background colour the sticker will be composited onto, resolved
  * deterministically from the options. Exposed so the panel can show it.
+ *
+ * With a non-null `mask` the 'tint' path reads the masked cutout instead of
+ * the rectangular crop; the 'solid' and 'piece-bg' paths are mask-independent.
  */
-export function resolveStickerBackground(grid: Grid, sel: CellRect, opts: StickerOpts): string {
+export function resolveStickerBackground(
+  grid: Grid,
+  sel: CellRect,
+  opts: StickerOpts,
+  mask?: CellMask | null,
+): string {
   const mode = opts.background.mode;
   if (mode === "solid") return (opts.background.colour ?? "#ffffff").toLowerCase();
   const bg = detectBackground(grid);
   if (mode === "piece-bg") return bg;
   // 'tint' — complement of the head's dominant body colour; fall back to the
-  // whole grid, then to the background itself, if the crop is empty.
+  // whole grid, then to the background itself, if the cutout is empty.
   try {
-    return complementTint(dominantBodyColour(crop(grid, sel), bg));
+    const cutout =
+      mask === null || mask === undefined ? crop(grid, sel) : buildStickerGrid(grid, sel, mask);
+    return complementTint(dominantBodyColour(cutout, bg));
   } catch {
     try {
       return complementTint(dominantBodyColour(grid, bg));
@@ -373,12 +454,17 @@ export function outlinePixels(
  *
  * Returns the rotated layer's RGBA plus the resolved metrics so callers
  * (and tests) can reason about exact pixel geometry.
+ *
+ * A non-null `mask` only changes which cells enter at the first step (see
+ * buildStickerGrid); sizing stays tilt-invariant and the raster outline hugs
+ * the painted silhouette because it dilates that cutout's alpha mask.
  */
 export function renderStickerLayer(
   grid: Grid,
   sel: CellRect,
   opts: StickerOpts,
   targetPx: number,
+  mask?: CellMask | null,
 ): {
   data: Uint8ClampedArray<ArrayBuffer>;
   cellPx: number;
