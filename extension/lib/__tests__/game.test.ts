@@ -383,4 +383,61 @@ describe("game.js — startGame shell", () => {
   it("throws only when there is no canvas at all", () => {
     expect(() => startGame({} as never)).toThrow(/canvas/);
   });
+
+  it("is losable: a player who never jumps crashes into the first obstacle", async () => {
+    const { canvas } = stubCanvas();
+    let cb: FrameRequestCallback | null = null;
+    vi.stubGlobal("requestAnimationFrame", (fn: FrameRequestCallback) => {
+      cb = fn;
+      return 1;
+    });
+    vi.stubGlobal("cancelAnimationFrame", () => {});
+
+    const frames = Object.assign([fakeFrame(88, 96), fakeFrame(88, 96)], { cellPx: 4 });
+    const game = startGame({ canvas, frames, palette: ["#ac3232"] });
+    game.restart();
+    for (let t = 16; t < 15_000 && game.getState() === "running"; t += 16) cb!(t);
+    expect(game.getState()).toBe("over");
+    expect(game.getScore()).toBeGreaterThan(0);
+    // The run is banked as a high score.
+    await Promise.resolve();
+    expect(await loadHighScore()).toBe(game.getScore());
+    game.stop();
+  });
+
+  it("stays winnable: an autopilot survives two minutes through the whole speed ramp", () => {
+    const { canvas } = stubCanvas();
+    let cb: FrameRequestCallback | null = null;
+    vi.stubGlobal("requestAnimationFrame", (fn: FrameRequestCallback) => {
+      cb = fn;
+      return 1;
+    });
+    vi.stubGlobal("cancelAnimationFrame", () => {});
+
+    const frames = Object.assign([fakeFrame(88, 96), fakeFrame(88, 96)], { cellPx: 4 });
+    const game = startGame({ canvas, frames, palette: ["#ac3232"] });
+    game.restart();
+
+    const step = 1000 / 60;
+    for (let t = step; t < 120_000; t += step) {
+      const snap = game.getSnapshot();
+      if (snap.state !== "running") break;
+      // Jump when the nearest obstacle ahead is about a jump-arc away.
+      const me = snap.runnerRect;
+      const ahead = snap.obstacles
+        .filter((o) => o.x + o.w > me.x)
+        .sort((a, b) => a.x - b.x)[0];
+      if (ahead && snap.runner.grounded) {
+        const gap = ahead.x - (me.x + me.w);
+        if (gap < snap.spriteH * 1.4) {
+          window.dispatchEvent(new KeyboardEvent("keydown", { code: "Space", cancelable: true }));
+        }
+      }
+      cb!(t);
+    }
+
+    expect(game.getState()).toBe("running");
+    expect(game.getScore()).toBeGreaterThan(1000);
+    game.stop();
+  });
 });

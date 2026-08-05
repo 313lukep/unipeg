@@ -194,8 +194,12 @@ select {
   border-color: var(--line);
 }
 
-/* Square focus rings even on round pills — a cell-boundary tell. */
-:focus-visible {
+/* Square focus rings even on round pills — a cell-boundary tell. The explicit
+   selectors are there to out-specify the .btn / input radius rules above. */
+:focus-visible,
+.btn:focus-visible,
+input[type="number"]:focus-visible,
+a:focus-visible {
   outline: 2px solid var(--pink);
   outline-offset: 2px;
   border-radius: 0;
@@ -280,9 +284,11 @@ input[type="number"]::-webkit-inner-spin-button {
   cursor: pointer;
 }
 
-.stage:focus-within {
+/* Keyboard focus only — the board is focused programmatically on load and a
+   ring around the whole stage at rest reads as an error, not as focus. */
+.stage canvas:focus-visible {
   outline: 2px solid var(--pink);
-  outline-offset: 2px;
+  outline-offset: -2px;
 }
 
 /* Sits at the top of the board: the runner and its obstacles own the bottom. */

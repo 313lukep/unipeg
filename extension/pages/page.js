@@ -141,9 +141,10 @@ async function loadLibs() {
 
 /* ── rendering ────────────────────────────────────────────────────────── */
 
-function drawPortrait(grid) {
+/** Sizes the portrait canvas so one grid cell is always a whole device pixel. */
+function portraitContext() {
   const canvas = el("portrait");
-  if (!canvas) return;
+  if (!canvas) return null;
   const base = window.innerWidth < 560 ? 3 : 4; // CSS px per cell
   const cellPx = base * deviceScale(); // device px per cell — always an integer
   canvas.width = 24 * cellPx;
@@ -152,7 +153,33 @@ function drawPortrait(grid) {
   canvas.style.height = 24 * base + "px";
   const ctx = canvas.getContext("2d");
   ctx.imageSmoothingEnabled = false;
-  lib.sprite.drawGrid(ctx, grid, cellPx, 0, 0);
+  return { ctx, cellPx, canvas };
+}
+
+function drawPortrait(grid) {
+  const target = portraitContext();
+  if (!target) return;
+  lib.sprite.drawGrid(target.ctx, grid, target.cellPx, 0, 0);
+}
+
+/**
+ * Empty state from docs/DESIGN.md: a blank 24x24 ghost grid with one lone pink
+ * pixel at cell (12,4) — where a horn would be. It does not blink; it waits.
+ */
+function drawGhostPortrait() {
+  const target = portraitContext();
+  if (!target) return;
+  const { ctx, cellPx, canvas } = target;
+  const rule = deviceScale();
+  ctx.fillStyle = PALETTE.card;
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.fillStyle = PALETTE.line;
+  for (let i = 4; i < 24; i += 4) {
+    ctx.fillRect(i * cellPx, 0, rule, canvas.height);
+    ctx.fillRect(0, i * cellPx, canvas.width, rule);
+  }
+  ctx.fillStyle = PALETTE.pink;
+  ctx.fillRect(12 * cellPx, 4 * cellPx, cellPx, cellPx);
 }
 
 function stopGame() {
@@ -221,19 +248,17 @@ function handleScore(score) {
   }
 }
 
-/* ── hint ─────────────────────────────────────────────────────────────── */
+/* ── board notice ─────────────────────────────────────────────────────── */
 
+/**
+ * Overlays a line on the board. Reserved for failures: lib/game.js draws its
+ * own "press space" prompt, so a second prompt here would only be noise.
+ */
 function setHint(text) {
   const hint = el("stagehint");
   if (!hint) return;
-  hint.textContent = text;
-  show(hint, Boolean(text) && !state.hintDismissed);
-}
-
-function dismissHint() {
-  if (state.hintDismissed) return;
-  state.hintDismissed = true;
-  show(el("stagehint"), false);
+  hint.textContent = text || "";
+  show(hint, Boolean(text));
 }
 
 /* ── views ────────────────────────────────────────────────────────────── */
@@ -243,12 +268,15 @@ function showOnly(which) {
   show(el("offState"), which === "off");
   show(el("stage"), which === "play");
   show(el("foot"), which === "play");
+  // The new tab header is nothing but the piece, so it has nothing to say
+  // before one is chosen; the offline header still has to say "you're offline".
   const head = document.querySelector(".head");
-  if (head) head.hidden = which === "off";
+  if (head) head.hidden = which === "off" || (which === "pick" && MODE === "newtab");
 }
 
 function showPick(note, bad) {
   showOnly("pick");
+  drawGhostPortrait();
   const noteEl = el("pickNote");
   if (noteEl) {
     noteEl.textContent = note || "Any alive piece, 1 to 400000. Rendered locally, offline.";
@@ -269,7 +297,15 @@ async function showPiece(id) {
     return;
   }
 
-  const seed = await lib.upeg.seedForId(id);
+  let seed;
+  try {
+    seed = await lib.upeg.seedForId(id);
+  } catch (err) {
+    // The snapshot is bundled, so this is a broken install, never a dead network.
+    console.error("unipegPFP: snapshot unreadable", err);
+    showPick("Piece snapshot unreadable. Reload the extension from chrome://extensions.", true);
+    return;
+  }
   if (seed === null || seed === undefined) {
     const input = el("pickInput");
     if (input) input.value = String(id);

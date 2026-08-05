@@ -216,7 +216,6 @@ function prefersReducedMotion() {
  * @param {HTMLCanvasElement[]} opts.frames  run-cycle frames from buildRunFrames
  * @param {string[]} opts.palette            the piece's own colours
  * @param {(score:number, meta:{high:number,state:string})=>void} [opts.onScore]
- * @returns {{ stop():void, restart():void, getScore():number }}
  */
 export function startGame({ canvas, frames, palette, onScore, config } = {}) {
   if (!canvas) throw new Error("startGame needs a canvas");
