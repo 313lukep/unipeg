@@ -44,6 +44,7 @@ import {
 import type { CellRect, Grid } from "@/lib/grid";
 import {
   composeStickerCanvas,
+  EMPTY_MASK_REASON,
   exportSticker,
   type StickerOpts,
 } from "@/lib/exporter/sticker";
@@ -79,9 +80,10 @@ const DEBOUNCE_MS = 80;
 
 /**
  * The exporter's own guard message, shown verbatim when HIGHLIGHT is active
- * with nothing painted (compose is skipped rather than allowed to throw).
+ * with nothing painted (compose is skipped rather than allowed to throw, so
+ * the message is taken straight from the exporter instead of re-worded).
  */
-export const EMPTY_MASK_MESSAGE = "highlight at least one pixel";
+export const EMPTY_MASK_MESSAGE = EMPTY_MASK_REASON;
 
 const OUTLINE_PILLS: { colour: OutlineColour; label: string }[] = [
   { colour: "#ffffff", label: "WHITE" },

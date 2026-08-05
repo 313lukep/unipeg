@@ -120,6 +120,11 @@ export default function Home() {
   const [aliveCount, setAliveCount] = useState<number | null>(null);
   const [tool, setTool] = useState<Tool>("fullbody");
   const [selection, setSelection] = useState<CellRect | null>(null);
+  // Sticker selection tool. BOX (the rectangle) is the default; HIGHLIGHT
+  // paints an exact cell mask on the stage. Both reset per piece, in the
+  // same places selection does — no effect, no loop.
+  const [selectMode, setSelectMode] = useState<SelectMode>("box");
+  const [mask, setMask] = useState<ReadonlySet<string> | null>(null);
   // X-crop ghost in Full-Body Fit — on by default per DESIGN.md.
   const [cropGhost, setCropGhost] = useState(true);
   const [loadingRow, setLoadingRow] = useState(0);
@@ -162,6 +167,8 @@ export default function Home() {
     setGrid(nextGrid);
     setTheme(t);
     setSelection(initialSelection(nextGrid));
+    setSelectMode("box");
+    setMask(null);
     setErrorText(null);
     setPhase("loaded");
     setWipeKey((k) => k + 1);
@@ -175,6 +182,8 @@ export default function Home() {
       setPiece(null);
       setGrid(null);
       setSelection(null);
+      setSelectMode("box");
+      setMask(null);
       startRows();
       try {
         const resolved = await resolvePiece(id);
@@ -203,6 +212,8 @@ export default function Home() {
       setPiece(null);
       setGrid(null);
       setSelection(null);
+      setSelectMode("box");
+      setMask(null);
       setTheme(null);
       setPhase("error");
       setErrorText(errorCopy(err));
@@ -245,7 +256,15 @@ export default function Home() {
           cropGhost={cropGhost}
           onCropGhostChange={setCropGhost}
         >
-          <StickerProvider grid={grid} pieceId={pieceId} selection={selection}>
+          <StickerProvider
+            grid={grid}
+            pieceId={pieceId}
+            selection={selection}
+            selectMode={selectMode}
+            onSelectModeChange={setSelectMode}
+            mask={mask}
+            onMaskChange={setMask}
+          >
             <div className={MAIN_ROW_CLASS}>
               {/* MAIN ROW left: the stage (cell-snapped CropBox in sticker
                   mode; dragging it low-reses the sticker preview) */}
@@ -258,6 +277,9 @@ export default function Home() {
                     mode={tool}
                     selection={selection}
                     onSelectionChange={setSelection}
+                    selectMode={selectMode}
+                    mask={mask}
+                    onMaskChange={setMask}
                     wipeKey={wipeKey}
                   />
                 </StickerStageDragLayer>
