@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>unipegPFP</title>
+    <link rel="stylesheet" href="pages/page.css" />
+    <style>
+      /* Popup-only overrides. The shared page tokens do the rest. */
+      html,
+      body {
+        height: auto;
+      }
+      body {
+        width: 300px;
+        overflow: visible;
+        padding: 18px;
+      }
+      .wordmark {
+        font-weight: 800;
+        letter-spacing: -0.01em;
+        font-size: 18px;
+        margin: 0 0 2px;
+      }
+      .tagline {
+        font-family: var(--mono);
+        font-size: 11px;
+        color: var(--mute);
+        letter-spacing: 0.06em;
+        margin: 0 0 20px;
+      }
+      .row {
+        display: flex;
+        gap: 10px;
+        align-items: center;
+      }
+      .row input[type="number"] {
+        flex: 1;
+        width: auto;
+      }
+      .stat {
+        display: flex;
+        justify-content: space-between;
+        align-items: baseline;
+        font-family: var(--mono);
+        font-size: 12px;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: var(--mute);
+        border-top: 1px solid var(--line);
+        padding-top: 14px;
+        margin-top: 20px;
+      }
+      .stat b {
+        color: var(--ink);
+        font-size: 16px;
+      }
+      #play {
+        width: 100%;
+        margin-top: 16px;
+      }
+      .field:last-of-type {
+        margin-bottom: 0;
+      }
+    </style>
+  </head>
+  <body>
+    <p class="wordmark">unipegPFP</p>
+    <p class="tagline">Offline Unipeg</p>
+
+    <form id="pieceForm">
+      <label class="field">
+        <span class="label">Piece number</span>
+        <span class="row">
+          <input
+            type="number"
+            id="piece"
+            min="1"
+            max="400000"
+            step="1"
+            inputmode="numeric"
+            placeholder="185206"
+            required
+          />
+          <button type="submit" class="btn solid">Save</button>
+        </span>
+        <span class="help" id="note" role="status"></span>
+      </label>
+    </form>
+
+    <div class="field">
+      <label class="switch">
+        <input type="checkbox" id="newtab" />
+        <span class="glyph" aria-hidden="true"><i></i><i></i><i></i><i></i></span>
+        <span>Unipeg on every new tab</span>
+      </label>
+    </div>
+
+    <div class="stat">
+      <span>Best run</span>
+      <b id="best">0</b>
+    </div>
+
+    <button type="button" id="play" class="btn">Play now</button>
+
+    <script type="module" src="popup.js"></script>
+  </body>
+</html>

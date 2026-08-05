@@ -285,9 +285,11 @@ input[type="number"]::-webkit-inner-spin-button {
   outline-offset: 2px;
 }
 
+/* Sits at the top of the board: the runner and its obstacles own the bottom. */
 .stagehint {
   position: absolute;
-  inset: auto 0 12px;
+  inset: 12px 0 auto;
+  margin: 0;
   text-align: center;
   font-family: var(--mono);
   font-size: 11px;
@@ -414,11 +416,18 @@ dialog h2 {
 }
 
 .field .help {
+  display: block;
   font-family: var(--mono);
   font-size: 11px;
   color: var(--mute);
   margin-top: 8px;
   line-height: 1.5;
+}
+
+.field .help.bad {
+  color: var(--ink);
+  border-left: 2px solid var(--pink);
+  padding-left: 8px;
 }
 
 .dialogfoot {

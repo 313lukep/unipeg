@@ -215,8 +215,8 @@ export function buildRunFrames(grid, options = {}) {
     const canvas = createCanvas(width, height);
     const ctx = pixelContext(canvas);
     const keyed = keyedFrames[Math.min(i, keyedFrames.length - 1)];
-    // Bob lifts the body; the extra row at the bottom keeps the feet on the
-    // ground line in both frames.
+    // The bob lifts the whole piece by one cell on alternate frames; the extra
+    // row at the bottom of the canvas is the headroom that lift needs.
     drawKeyedCells(ctx, keyed, box, scale, 0, 0, bobbing ? bob + 1 : 0);
     return canvas;
   });
