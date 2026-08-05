@@ -66,6 +66,9 @@ export type StickerProviderProps = {
   /** page-owned highlight mask; null until HIGHLIGHT is first chosen */
   mask?: ReadonlySet<string> | null;
   onMaskChange?: (next: ReadonlySet<string>) => void;
+  /** explicit BRUSH / ERASER stroke action (owner request) */
+  brushAction?: "paint" | "erase";
+  onBrushActionChange?: (a: "paint" | "erase") => void;
   children: ReactNode;
 };
 
@@ -157,12 +160,16 @@ function useStickerEngine({
   selection,
   selectMode = "box",
   onSelectModeChange,
+  brushAction = "paint",
+  onBrushActionChange,
   mask = null,
   onMaskChange,
 }: Omit<StickerProviderProps, "children">) {
   // ---- controls state (defaults per spec) --------------------------------
   // Outline is fractional cells (0..1.5 in 1/4-cell steps); owner default 1/2.
   const [outlineWidth, setOutlineWidth] = useState(0.5);
+  // Last non-zero thickness, so NONE -> WHITE/BLACK restores what you had.
+  const [lastOutlineWidth, setLastOutlineWidth] = useState(0.5);
   const [outlineColour, setOutlineColour] = useState<OutlineColour>("#ffffff");
   const [twoTone, setTwoTone] = useState(false);
   const [tilt, setTilt] = useState(-22);
@@ -172,7 +179,8 @@ function useStickerEngine({
   const [sizeInFrame, setSizeInFrame] = useState(78); // percent
   const [nudgeX, setNudgeX] = useState(0);
   const [nudgeY, setNudgeY] = useState(0);
-  const [circleMask, setCircleMask] = useState(false);
+  // Owner: the pfp-crop preview starts ON, still toggleable off.
+  const [circleMask, setCircleMask] = useState(true);
   const [exportSize, setExportSize] = useState<ExportSize>(1000);
 
   // export feedback
@@ -417,7 +425,10 @@ function useStickerEngine({
     clearMask,
     seedMaskFromBox,
     outlineWidth,
-    setOutlineWidth,
+    setOutlineWidth: (v: number) => {
+      if (v > 0) setLastOutlineWidth(v);
+      setOutlineWidth(v);
+    },
     outlineColour,
     setOutlineColour,
     twoTone,
@@ -437,6 +448,11 @@ function useStickerEngine({
     nudgeY,
     setNudgeY,
     circleMask,
+    brushAction,
+    setBrushAction: onBrushActionChange,
+    outlineOff: outlineWidth === 0,
+    setOutlineOff: (off: boolean) =>
+      setOutlineWidth(off ? 0 : lastOutlineWidth || 0.5),
     setCircleMask,
     exportSize,
     setExportSize,
@@ -581,6 +597,20 @@ export function StickerControls() {
             >
               {s.maskCount} CELLS
             </span>
+            <Pill
+              variant={s.brushAction === "paint" ? "active" : "card"}
+              aria-pressed={s.brushAction === "paint"}
+              onClick={() => s.setBrushAction?.("paint")}
+            >
+              BRUSH
+            </Pill>
+            <Pill
+              variant={s.brushAction === "erase" ? "active" : "card"}
+              aria-pressed={s.brushAction === "erase"}
+              onClick={() => s.setBrushAction?.("erase")}
+            >
+              ERASER
+            </Pill>
             <Pill variant="card" onClick={s.clearMask}>
               CLEAR
             </Pill>
@@ -612,6 +642,7 @@ export function StickerControls() {
             max={1.5}
             step={0.25}
             onChange={(v) => s.setOutlineWidth(Math.round(v * 4) / 4)}
+            /* NONE stays reachable at 0; the chip remembers the last width */
             format={formatOutlineCells}
           />
         </div>
@@ -620,12 +651,24 @@ export function StickerControls() {
             band is automatically the opposite colour */}
         <div className="flex flex-wrap items-center gap-2">
           <span className="text-[13px] font-semibold text-ink">Outline</span>
+          <Pill
+            variant={s.outlineOff ? "active" : "card"}
+            aria-pressed={s.outlineOff}
+            onClick={() => s.setOutlineOff(true)}
+          >
+            NONE
+          </Pill>
           {OUTLINE_PILLS.map(({ colour, label }) => (
             <Pill
               key={colour}
-              variant={s.outlineColour === colour ? "active" : "card"}
-              aria-pressed={s.outlineColour === colour}
-              onClick={() => s.setOutlineColour(colour)}
+              variant={
+                !s.outlineOff && s.outlineColour === colour ? "active" : "card"
+              }
+              aria-pressed={!s.outlineOff && s.outlineColour === colour}
+              onClick={() => {
+                s.setOutlineColour(colour);
+                if (s.outlineOff) s.setOutlineOff(false);
+              }}
             >
               {label}
             </Pill>

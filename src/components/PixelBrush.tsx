@@ -50,6 +50,12 @@ export type PixelBrushProps = {
   cellPx: number;
   gridW: number;
   gridH: number;
+  /**
+   * Forced stroke action from the panel's BRUSH / ERASER buttons. When set,
+   * every stroke does this regardless of the cell it started on (owner:
+   * an explicit eraser is clearer on touch than the start-cell heuristic).
+   */
+  forceAction?: "paint" | "erase";
 };
 
 /** --ink scrim strength over unmasked cells. */
@@ -97,6 +103,7 @@ export default function PixelBrush({
   cellPx,
   gridW,
   gridH,
+  forceAction,
 }: PixelBrushProps) {
   const layerRef = useRef<HTMLDivElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -241,17 +248,18 @@ export default function PixelBrush({
       if (cell === null || !inBounds(cell, gridW, gridH)) return;
       e.preventDefault();
       e.currentTarget.setPointerCapture(e.pointerId);
-      // The stroke's action comes from the cell it STARTED on.
-      const action: StrokeAction = maskRef.current.has(cellKey(cell.x, cell.y))
-        ? "erase"
-        : "paint";
+      // Explicit BRUSH/ERASER wins; otherwise the stroke's action comes
+      // from the cell it STARTED on.
+      const action: StrokeAction =
+        forceAction ??
+        (maskRef.current.has(cellKey(cell.x, cell.y)) ? "erase" : "paint");
       const work = new Set(maskRef.current);
       const changed = applyStrokeInto(work, [cell], action, gridW, gridH);
       dragRef.current = { pointerId: e.pointerId, action, last: cell, work };
       setCursor(cell);
       if (changed) onChange(new Set(work));
     },
-    [cellFromEvent, gridW, gridH, onChange],
+    [cellFromEvent, gridW, gridH, onChange, forceAction],
   );
 
   const onPointerMove = useCallback(

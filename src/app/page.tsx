@@ -127,6 +127,8 @@ export default function Home() {
   const [mask, setMask] = useState<ReadonlySet<string> | null>(null);
   // X-crop ghost in Full-Body Fit — on by default per DESIGN.md.
   const [cropGhost, setCropGhost] = useState(true);
+  // Explicit BRUSH / ERASER for the highlight brush (owner's request).
+  const [brushAction, setBrushAction] = useState<"paint" | "erase">("paint");
   const [loadingRow, setLoadingRow] = useState(0);
   const [wipeKey, setWipeKey] = useState(0);
 
@@ -264,6 +266,8 @@ export default function Home() {
             onSelectModeChange={setSelectMode}
             mask={mask}
             onMaskChange={setMask}
+            brushAction={brushAction}
+            onBrushActionChange={setBrushAction}
           >
             <div className={MAIN_ROW_CLASS}>
               {/* MAIN ROW left: the stage (cell-snapped CropBox in sticker
@@ -280,6 +284,7 @@ export default function Home() {
                     selectMode={selectMode}
                     mask={mask}
                     onMaskChange={setMask}
+                    brushAction={brushAction}
                     wipeKey={wipeKey}
                   />
                 </StickerStageDragLayer>

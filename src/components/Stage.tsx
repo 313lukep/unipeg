@@ -45,6 +45,8 @@ export type StageProps = {
   /** null = box mode; a set of `${x},${y}` cell keys = highlight mode */
   mask?: ReadonlySet<string> | null;
   onMaskChange?: (next: ReadonlySet<string>) => void;
+  /** forced stroke action from the panel's BRUSH / ERASER buttons */
+  brushAction?: "paint" | "erase";
   /** bump to replay the column-wipe theatre (one per successful load) */
   wipeKey: number;
 };
@@ -76,6 +78,7 @@ export default function Stage({
   selectMode = "box",
   mask = null,
   onMaskChange,
+  brushAction,
   wipeKey,
 }: StageProps) {
   const cols = grid?.w ?? 24;
@@ -233,6 +236,7 @@ export default function Stage({
                 cellPx={cellPx}
                 gridW={cols}
                 gridH={rows}
+                forceAction={brushAction}
               />
             ) : (
               selection !== null && (
