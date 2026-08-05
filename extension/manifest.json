@@ -1,0 +1,30 @@
+{
+  "manifest_version": 3,
+  "name": "unipegPFP — Offline Unipeg",
+  "version": "1.0.0",
+  "description": "Your Unipeg takes over the new tab, and shows up with a runner game whenever the internet drops. Renders on-chain art fully offline.",
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "permissions": ["webNavigation", "storage"],
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "chrome_url_overrides": {
+    "newtab": "pages/newtab.html"
+  },
+  "action": {
+    "default_title": "unipegPFP",
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+  "offline_enabled": true,
+  "minimum_chrome_version": "116"
+}
