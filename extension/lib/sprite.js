@@ -9,6 +9,8 @@
 
 import { GRID_SIZE, UPEG_COLORS, decodeSeed, gridFromMetadata, gridFromSeed } from "./upeg.js";
 
+const clampInt = (v, lo, hi) => Math.min(Math.max(Math.round(v), lo), hi);
+
 /**
  * THE RUN CYCLE.
  *
@@ -35,28 +37,188 @@ export const RUN_CYCLE = [
 export const DEFAULT_SCALE = 4;
 
 /**
- * THE CROUCH.
+ * THE CROUCH — A NECK PIVOT, NOT A SHRINK.
  *
- * Ducking re-renders the same run cycle at a SMALLER INTEGER SCALE, not a
- * squashed blit: 4x becomes 3x, 8x becomes 6x. Every cell is still a whole
- * number of device pixels, so the crouched unicorn is exactly as crisp as the
- * standing one — a fractional squash would smear it, which is the one thing
- * this codebase does not do.
+ * The unicorn ducks the way a horse ducks: it drops its head and hunches its
+ * shoulders. Everything above the back line — head, horn, mane, wing tips —
+ * is translated DOWN by whole cells and the head additionally leans forward by
+ * whole cells; the torso and all four legs are left exactly where they are, so
+ * the feet never leave the ground line. Nothing is scaled, nothing is rotated
+ * by a fractional angle, no cell is resampled: the crouched unicorn is drawn at
+ * the SAME integer scale as the standing one, from the same 24x24 cells.
  *
- * Three quarters is the only ratio that stays integral at both of the scales
- * the page actually uses (4 and 8), and it leaves the duck comfortably under
- * the low flyer while still being a big enough target to be hit by everything
- * else.
+ * (The old crouch re-rendered the run frames at 3/4 scale. It was crisp, but a
+ * unicorn that shrinks is not a unicorn that ducks — the owner rejected it.)
  */
-export const DUCK_RATIO = 3 / 4;
+
+/** Whole cells the front end folds down by. The whole crouch is this number. */
+export const DUCK_DROP = 4;
+
+/** Whole cells the head juts forward by, on top of the drop. */
+export const DUCK_LEAN = 1;
 
 /**
- * Run scale -> duck scale. Rounds DOWN, so the ratio is never above 3/4 at any
- * scale: an odd scale that rounded up would give the game a crouch barely
- * smaller than the stand, and the flyer lanes are built on this bound.
+ * The layers switched off to leave the bare body silhouette behind.
+ *
+ * The body layer is the one that carries the horse's own topline: torso, neck
+ * and skull, with no horn, mane, wings or tail piled on top of it. Re-rendering
+ * the piece with everything else off is how the back line is *derived* rather
+ * than guessed — it works for every piece and every accessory variant because
+ * it asks the contract's own art where the animal's back is.
  */
-export function duckScaleFor(scale) {
-  return Math.max(1, Math.floor(Math.max(1, scale) * DUCK_RATIO));
+const BODY_ONLY = {
+  horn: 0,
+  accessories: 0,
+  wings: 0,
+  hair: 0,
+  tail: 0,
+  legsFront: 0,
+  legsBack: 0,
+  ground: 0,
+  eyes: 0,
+};
+
+/** Deepest row of the back line the shear is allowed to cut at, as a fraction
+ *  of the content box: below this we would be shearing legs, not shoulders. */
+const BACK_LINE_LIMIT = 0.7;
+
+/** Topmost painted row of each column, or -1 for an empty column. */
+export function topLine(keyed) {
+  const width = keyed[0] ? keyed[0].length : 0;
+  const out = new Array(width).fill(-1);
+  for (let x = 0; x < width; x++) {
+    for (let y = 0; y < keyed.length; y++) {
+      if (keyed[y][x] !== null && keyed[y][x] !== undefined) {
+        out[x] = y;
+        break;
+      }
+    }
+  }
+  return out;
+}
+
+/**
+ * Where the neck meets the shoulders, and which columns the head owns.
+ *
+ * `backLine`  — the row the shear cuts at. Everything strictly above it folds.
+ *               It is the LOWEST high point of the bare body's topline: the
+ *               withers/back plateau, with the head and neck rising off it.
+ * `split`     — the first column (walking in from the facing side) that still
+ *               sits above the back line: the base of the neck.
+ * `facing`    — +1 when the piece faces right, -1 when it faces left. Derived
+ *               from which half of the box the topline peaks in, so a mirrored
+ *               piece would lean the right way without a second code path.
+ *
+ * With no metadata to re-render (a bare grid handed straight in) the back line
+ * falls back to the median of the whole silhouette's topline, which lands in
+ * the same place for a horse-shaped thing and cannot be wrong by much.
+ */
+export function neckPivot(grid, keyed, box, drop = DUCK_DROP) {
+  const silhouette = topLine(keyed);
+  let bare = null;
+  if (grid && grid.meta && grid.meta.body > 0) {
+    const g = gridFromMetadata({ ...grid.meta, ...BODY_ONLY });
+    bare = topLine(g.cells.map((row) => row.map((c) => (c === g.bg ? null : c))));
+  }
+  const line = bare && bare.some((v) => v >= 0) ? bare : silhouette;
+  const rows = line.filter((v) => v >= 0);
+
+  // The back line: the deepest point of the topline, i.e. the plateau the head
+  // and the wings rise above. Clamped so the fold is always a real fold (at
+  // least `drop` cells of art above it) and never reaches down into the legs.
+  const deepest = rows.length ? Math.max(...rows) : box.y + drop;
+  const backLine = clampInt(
+    deepest,
+    box.y + drop,
+    box.y + Math.floor(box.h * BACK_LINE_LIMIT),
+  );
+
+  // Facing: the column the topline peaks in, relative to the box's centre.
+  let peak = box.x;
+  let peakRow = Infinity;
+  for (let x = 0; x < line.length; x++) {
+    if (line[x] >= 0 && line[x] < peakRow) {
+      peakRow = line[x];
+      peak = x;
+    }
+  }
+  const facing = peak >= box.x + box.w / 2 ? 1 : -1;
+
+  // The neck's base: walk in from the facing edge while the topline is still
+  // above the back line. Those columns are head, crest and neck.
+  let split = facing > 0 ? box.x + box.w - 1 : box.x;
+  for (let i = 0; i < box.w; i++) {
+    const x = facing > 0 ? box.x + box.w - 1 - i : box.x + i;
+    if (line[x] < 0 || line[x] >= backLine) break;
+    split = x;
+  }
+  return { backLine, split, facing };
+}
+
+/** True for the columns the head and neck occupy, given a pivot. */
+function isHeadColumn(pivot, x) {
+  return pivot.facing > 0 ? x >= pivot.split : x <= pivot.split;
+}
+
+/**
+ * Fold one keyed frame into its crouch.
+ *
+ * Every painted cell above `backLine` moves down `drop` cells; the head columns
+ * also move `lean` cells forward. Cells that land on the torso simply overwrite
+ * it — this is a silhouette, not a stack of sprites. Integer cells throughout;
+ * the result is another 24x24 keyed grid.
+ *
+ * Because the whole of the art above the back line moves down by the same whole
+ * number, the crouch is exactly `drop` cells shorter than the stand: the tallest
+ * thing left is either the moved topline (box.y + drop) or the back line itself,
+ * and the clamp in `neckPivot` guarantees the first of those wins.
+ */
+export function duckCells(keyed, pivot, options = {}) {
+  const drop = Math.max(0, Math.round(options.drop ?? DUCK_DROP));
+  const lean = Math.max(0, Math.round(options.lean ?? DUCK_LEAN)) * pivot.facing;
+  const out = keyed.map((row) => row.slice());
+  for (let y = 0; y < pivot.backLine; y++) {
+    for (let x = 0; x < out[y].length; x++) out[y][x] = null;
+  }
+  for (let y = 0; y < pivot.backLine; y++) {
+    const row = keyed[y];
+    if (!row) continue;
+    for (let x = 0; x < row.length; x++) {
+      const colour = row[x];
+      if (colour === null || colour === undefined) continue;
+      const nx = x + (isHeadColumn(pivot, x) ? lean : 0);
+      const ny = y + drop;
+      if (nx < 0 || nx >= GRID_SIZE || ny < 0 || ny >= GRID_SIZE) continue;
+      out[ny][nx] = colour;
+    }
+  }
+  return out;
+}
+
+/**
+ * The lean, but only when the head has somewhere to lean *into*.
+ *
+ * A crouch must never be a bigger target than a stand, so the forward shift is
+ * dropped whenever it would push a painted cell past the standing silhouette's
+ * own edge (or off the grid). Most pieces already reach the edge of the box
+ * with their muzzle, so this quietly resolves to a straight-down fold — which
+ * still reads as head-down, and keeps the hitbox honest.
+ */
+export function safeLean(keyed, box, pivot, drop = DUCK_DROP, lean = DUCK_LEAN) {
+  if (lean <= 0) return 0;
+  const edge = pivot.facing > 0 ? box.x + box.w - 1 : box.x;
+  for (let y = 0; y < pivot.backLine; y++) {
+    const row = keyed[y];
+    if (!row) continue;
+    for (let x = 0; x < row.length; x++) {
+      if (row[x] === null || row[x] === undefined) continue;
+      if (!isHeadColumn(pivot, x)) continue;
+      const nx = x + lean * pivot.facing;
+      if (nx < 0 || nx >= GRID_SIZE) return 0;
+      if (pivot.facing > 0 ? nx > edge : nx < edge) return 0;
+    }
+  }
+  return lean;
 }
 
 /* ------------------------------------------------------------- the flyer */
@@ -334,13 +496,23 @@ export function buildRunFrames(grid, options = {}) {
   // The game needs three sprite sets and only ever receives one array, so the
   // other two ride along on it. Both are built here rather than in the game so
   // every scale decision stays in one file, next to the integer-scale rule.
-  const duckScale = duckScaleFor(scale);
+  //
+  // The crouch keeps the run cycle's frame count — the legs go on galloping
+  // while the head is down — and keeps the run cycle's scale. Only the cells
+  // move. Its own box is measured from the folded cells, so the game's hitbox
+  // is exactly the picture: shorter by `drop` cells, feet on the same row.
+  const drop = Math.max(0, Math.round(options.duckDrop ?? DUCK_DROP));
+  const pivot = neckPivot(grid, keyedFrames[0], box, drop);
+  const lean = safeLean(keyedFrames[0], box, pivot, drop, options.duckLean ?? DUCK_LEAN);
+  const ducked = keyedFrames.map((keyed) => duckCells(keyed, pivot, { drop, lean }));
+  const duckBox = runCycleBounds(ducked) || box;
   frames.duck = withMeta(
-    renderCycle(keyedFrames, bobFrames, box, duckScale, bobbing),
-    duckScale,
-    box,
+    renderCycle(ducked, bobFrames, duckBox, scale, bobbing),
+    scale,
+    duckBox,
     bobbing,
   );
+  frames.duck.pivot = { ...pivot, drop, lean };
   frames.flyer = buildFlyerFrames({ scale: flyerScaleFor(scale) });
   return frames;
 }
