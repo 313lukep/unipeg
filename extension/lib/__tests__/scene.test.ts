@@ -11,6 +11,8 @@ import {
   FLOWERS,
   NIGHT,
   PALETTES,
+  BOULDER,
+  BUSH,
   ROCK,
   TREE,
   TREE_ROWS,
@@ -27,6 +29,10 @@ import {
   cellShape,
   sprayAt,
   stepGrazer,
+  streamCell,
+  streamCenter,
+  streamEdges,
+  bankWobble,
   waterCell,
 } from "../scene.js";
 
@@ -111,7 +117,7 @@ describe("scene.js — the drawn scenery", () => {
   });
 
   it("every shape's keys exist in both palettes", () => {
-    const shapes = [TREE, ROCK, ...TUFTS, ...FLOWERS];
+    const shapes = [TREE, ROCK, BOULDER, BUSH, ...TUFTS, ...FLOWERS];
     for (const s of shapes) {
       for (const r of s.paint) {
         expect([r.k, r.k in DAY, r.k in NIGHT]).toEqual([r.k, true, true]);
@@ -166,6 +172,38 @@ describe("scene.js — running water", () => {
     }
   });
 
+  it("the stream flows RIGHT by exactly one cell per tick", () => {
+    // Same identity as the fall, turned ninety degrees.
+    for (let y = 0; y < 9; y++) {
+      for (let x = 3; x < 30; x++) {
+        for (let t = 1; t < 9; t++) {
+          expect(streamCell(x, y, t)).toBe(streamCell(x - 1, y, t - 1));
+        }
+      }
+    }
+  });
+
+  it("the stream only ever asks for water colours, at any coordinate", () => {
+    const seen = new Set<string>();
+    for (let t = 0; t < 30; t++)
+      for (let y = -4; y < 14; y++) for (let x = -20; x < 90; x++) seen.add(streamCell(x, y, t));
+    expect([...seen].sort()).toEqual(["foam", "water", "waterDark"]);
+  });
+
+  it("the banks wander, in whole cells, and never invert the channel", () => {
+    const seen = new Set<number>();
+    for (let x = 0; x < 400; x++) {
+      const v = bankWobble(x);
+      expect(Number.isInteger(v)).toBe(true);
+      seen.add(v);
+    }
+    // It varies (a constant would be a canal)...
+    expect(seen.size).toBeGreaterThan(1);
+    // ...but never enough to close a 5-cell channel: max wobble is 2 a side.
+    expect(Math.max(...seen)).toBeLessThanOrEqual(2);
+    expect(Math.min(...seen)).toBeGreaterThanOrEqual(0);
+  });
+
   it("keeps the spray sparse — scatter, not static", () => {
     let on = 0;
     let total = 0;
@@ -211,13 +249,14 @@ describe("scene.js — the composition", () => {
     // Depth is scale, and only ever an integer one.
     expect(s.lanes.map((l) => l.scale)).toEqual([2, 3, 4]);
 
-    // The falls start above the horizon and land below it.
-    expect(s.fall.top).toBeLessThan(s.horizon);
-    expect(s.fall.poolY).toBeGreaterThan(s.horizon);
+    // The falls sit BELOW the treeline now — a feature in the middle distance,
+    // not a cliff face — and land in the stream.
+    expect(s.fall.top).toBeGreaterThan(s.horizon);
+    expect(s.fall.poolY).toBeGreaterThan(s.fall.top);
     expect(s.fall.poolY + s.fall.poolH).toBeLessThanOrEqual(s.h + s.fall.poolH);
     // The water runs down the cliff, not beside it.
-    expect(s.fall.x).toBeGreaterThanOrEqual(s.fall.cliffX);
-    expect(s.fall.x + s.fall.w).toBeLessThanOrEqual(s.fall.cliffX + s.fall.cliffW);
+    expect(s.fall.x).toBeGreaterThanOrEqual(s.fall.shelfX);
+    expect(s.fall.x + s.fall.w).toBeLessThanOrEqual(s.fall.shelfX + s.fall.shelfW);
 
     // The tree is rooted in the middle lane and stands on the canvas.
     expect(s.tree.baseY).toBe(s.lanes[1].y);
@@ -236,13 +275,93 @@ describe("scene.js — the composition", () => {
 
   it("puts the falls and the tree on OPPOSITE sides, framing the search bar", () => {
     const s = layout(320, 225);
-    const fallMid = s.fall.cliffX + s.fall.cliffW / 2;
+    const fallMid = s.fall.shelfX + s.fall.shelfW / 2;
     const treeMid = s.tree.x + 12 * s.tree.scale;
     expect(fallMid).toBeLessThan(s.w * 0.25);
     expect(treeMid).toBeGreaterThan(s.w * 0.6);
     // ...and the middle of the sky, where the bar floats, is clear of both.
-    expect(s.fall.cliffX + s.fall.cliffW).toBeLessThan(s.w * 0.35);
+    expect(s.fall.shelfX + s.fall.shelfW).toBeLessThan(s.w * 0.35);
     expect(s.tree.x).toBeGreaterThan(s.w * 0.5);
+  });
+
+  it("runs the stream between the middle and front lanes AT EVERY COLUMN", () => {
+    // The channel meanders now, so it is not enough to check one y: the whole
+    // curve — banks included — has to stay in the gap for every x, or a bend
+    // swings out and something grazes in the water.
+    for (const [w, h] of sizes) {
+      const s = layout(w, h);
+      const bad: string[] = [];
+      for (let x = 0; x < s.w; x++) {
+        const { top, bottom } = streamEdges(x, s.stream);
+        if (top <= s.lanes[1].y) bad.push(`x=${x} top ${top} <= lane1 ${s.lanes[1].y}`);
+        if (bottom >= s.lanes[2].y) bad.push(`x=${x} bottom ${bottom} >= lane2 ${s.lanes[2].y}`);
+        if (bottom <= top) bad.push(`x=${x} channel inverted`);
+        if (!Number.isInteger(top) || !Number.isInteger(bottom)) bad.push(`x=${x} fractional`);
+      }
+      expect([w, h, bad.slice(0, 3)]).toEqual([w, h, []]);
+      const gap = s.lanes[2].y - s.lanes[1].y;
+      expect([w, h, s.stream.h >= 3]).toEqual([w, h, true]);
+      expect([w, h, s.stream.h <= gap - 2]).toEqual([w, h, true]);
+    }
+  });
+
+  it("the stream actually meanders — it is not a canal", () => {
+    const s = layout(320, 225);
+    const mids = [];
+    for (let x = 0; x < s.w; x++) mids.push(streamCenter(x, s.stream));
+    const lo = Math.min(...mids);
+    const hi = Math.max(...mids);
+    // A real swing, not a wobble: several whole cells between the extremes.
+    expect(hi - lo).toBeGreaterThanOrEqual(4);
+    // ...and it genuinely turns rather than sloping one way across the page:
+    // the centreline's direction has to reverse at least twice.
+    let turns = 0;
+    let dir = 0;
+    for (let i = 1; i < mids.length; i++) {
+      const d = Math.sign(mids[i] - mids[i - 1]);
+      if (d !== 0 && d !== dir) {
+        if (dir !== 0) turns++;
+        dir = d;
+      }
+    }
+    expect(turns).toBeGreaterThanOrEqual(2);
+  });
+
+  it("hangs the falls off the meander's far bend, which is what sets them back", () => {
+    for (const [w, h] of sizes) {
+      const s = layout(w, h);
+      const atFalls = streamCenter(s.stream.anchorX, s.stream);
+      let furthest = Infinity;
+      for (let x = 0; x < s.w; x++) furthest = Math.min(furthest, streamCenter(x, s.stream));
+      // The channel is at (or within a cell of) its most distant point exactly
+      // where the water lands, and runs toward the viewer from there.
+      expect([w, h, atFalls]).toEqual([w, h, furthest]);
+      // ...and the shelf is inset from the left edge, not bleeding off it.
+      expect([w, h, s.fall.shelfX > 0]).toEqual([w, h, true]);
+    }
+  });
+
+  it("lands the falls in the stream, short and wide", () => {
+    for (const [w, h] of sizes) {
+      const s = layout(w, h);
+      // The pool meets the channel where the channel actually is under the
+      // falls — the stream meanders, so a fixed y would miss it by the swing.
+      const under = streamEdges(s.stream.anchorX, s.stream);
+      expect([w, h, Math.abs(s.fall.poolY - under.top) <= 3]).toEqual([w, h, true]);
+      expect([w, h, s.fall.poolY + s.fall.poolH > under.top]).toEqual([w, h, true]);
+      // Rock on BOTH sides of the water, not a face behind it.
+      expect([w, h, s.fall.x > s.fall.shelfX]).toEqual([w, h, true]);
+      expect([w, h, s.fall.x + s.fall.w < s.fall.shelfX + s.fall.shelfW]).toEqual([w, h, true]);
+      // ...and roughly centred in the shelf, so neither shoulder is a sliver.
+      const left = s.fall.x - s.fall.shelfX;
+      const right = s.fall.shelfX + s.fall.shelfW - (s.fall.x + s.fall.w);
+      expect([w, h, Math.abs(left - right) <= 1]).toEqual([w, h, true]);
+      // SHORT: the drop is less than the width of the shelf it comes off, and
+      // well under half the ground's depth. It used to be nearly all of it.
+      const drop = s.fall.poolY - s.fall.top;
+      expect([w, h, drop < s.depth * 0.5]).toEqual([w, h, true]);
+      expect([w, h, drop > 0]).toEqual([w, h, true]);
+    }
   });
 
   it("keeps grazing ground clear of the waterfall at every size", () => {
@@ -250,7 +369,7 @@ describe("scene.js — the composition", () => {
       const s = layout(w, h);
       for (let lane = 0; lane < 3; lane++) {
         const b = laneBounds(s, lane);
-        expect([w, h, lane, b.min > s.fall.cliffX + s.fall.cliffW]).toEqual([w, h, lane, true]);
+        expect([w, h, lane, b.min > s.fall.shelfX + s.fall.shelfW]).toEqual([w, h, lane, true]);
         expect([w, h, lane, b.max > b.min]).toEqual([w, h, lane, true]);
       }
     }

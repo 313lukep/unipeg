@@ -306,7 +306,19 @@ nice extension and the one you uninstall because your laptop is warm.
 whole flow is the identity `waterCell(x, y, t) === waterCell(x, y-1, t-1)` — the streaks
 move down exactly one whole cell per tick. No sub-pixel scroll, no gradient, nothing to
 resample. `x * 3` shears the comb so the streaks never line up into stripes across the
-fall.
+fall. `streamCell` is the same trick turned ninety degrees: `streamCell(x, y, t) ===
+streamCell(x-1, y, t-1)`, flowing right.
+
+**The stream meanders, and the meander is what sets the falls back.** `streamCenter(x)`
+sums two cosines of different periods and then *rounds to a whole cell* — the shape is
+continuous, the output never is. Both terms peak together at one column and nowhere else,
+and that column is the middle of the falls, so the channel is at its furthest point back
+exactly where the water lands and swings toward the viewer as it runs off right. The
+waterfall is not pushed anywhere; the stream arrives at it from the back of the clearing.
+
+The amplitude is bounded by the lane gap, and a test walks **every column** asserting the
+channel and both its banks stay between the middle lane's feet and the front lane's. A
+single-`y` check would have passed a bend that swings out and drowns a grazer.
 
 **The scenery is drawn, the pieces are on-chain.** The tree, the cliff, the tufts and the
 flowers are hand-drawn on the same cell lattice as the art — the same thing `lib/game.js`

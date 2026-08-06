@@ -279,6 +279,85 @@ export function sprayAt(x, y, t) {
   return ((x * 7 + y * 13 + t * 5) % 23) < 3;
 }
 
+/**
+ * THE STREAM, flowing to the RIGHT.
+ *
+ * Same trick as the fall turned ninety degrees: `x - t` moves the comb one
+ * whole cell along per tick, so `streamCell(x, y, t) === streamCell(x-1, y, t-1)`
+ * and nothing ever lands between pixels. The `y * 5` shear stops the current
+ * from banding into horizontal stripes down the channel.
+ */
+export function streamCell(x, y, t) {
+  const phase = (((x - t) * 2 + y * 5) % 17 + 17) % 17;
+  if (phase < 2) return "foam";
+  if (phase < 9) return "water";
+  return "waterDark";
+}
+
+/**
+ * The stream's banks wander. Both edges take a whole-cell wobble from x alone,
+ * so the channel is a stream and not a canal — and because it is a pure
+ * function of x, the bank is in exactly the same place on every frame.
+ */
+export function bankWobble(x) {
+  return ((x * 7) % 23 < 8 ? 1 : 0) + ((x * 3) % 17 < 5 ? 1 : 0);
+}
+
+/**
+ * THE MEANDER — where the middle of the channel is, at column x.
+ *
+ * The first stream ran dead straight and read as a canal. This is two cosines
+ * of different periods summed and then ROUNDED TO A WHOLE CELL, which is what
+ * keeps a curve legal here: the shape is continuous, the output never is.
+ *
+ * The phase is anchored on the falls, and anchored at the FAR extreme, so the
+ * channel is at its most distant where the water lands and swings toward the
+ * viewer as it runs off to the right. That is what sets the waterfall back:
+ * it is not moved, the stream arrives at it from the back of the clearing.
+ */
+export function streamCenter(x, stream) {
+  const dx = x - stream.anchorX;
+  // Both terms peak together at dx = 0, and nowhere else — which is what makes
+  // the falls' column exactly the meander's furthest point rather than merely
+  // near it. An earlier version phase-shifted the second cosine and put the
+  // real extreme two cells upstream of the water.
+  const wave =
+    0.62 * Math.cos((dx / stream.period) * Math.PI * 2) +
+    0.38 * Math.cos((dx / (stream.period * 0.41)) * Math.PI * 2);
+  return stream.y - Math.round(stream.amp * wave);
+}
+
+/** Top and bottom of the channel at column x, banks included. Integers. */
+export function streamEdges(x, stream) {
+  const mid = streamCenter(x, stream);
+  return {
+    top: mid - Math.floor(stream.h / 2) + bankWobble(x),
+    bottom: mid + Math.ceil(stream.h / 2) - bankWobble(x + 11),
+  };
+}
+
+/** A bush: rounder and taller than a tuft, for massing around the rocks. */
+export const BUSH_ROWS = [
+  "..ccc..",
+  ".ccccc.",
+  "ccccccc",
+  "ccctccc",
+  ".ctttc.",
+];
+
+export const BUSH = cellShape(BUSH_ROWS, { c: "canopyMid", t: "canopyDark" });
+
+/** A boulder, wider than it is tall, for the shoulders of the falls. */
+export const BOULDER_ROWS = [
+  "...rrrrr...",
+  ".rrrrrrrrd.",
+  "rrrrrrrrddd",
+  "rrrrrrrdddd",
+  "rrrrrddddd.",
+];
+
+export const BOULDER = cellShape(BOULDER_ROWS, { r: "rock", d: "rockDark" });
+
 /* --------------------------------------------------------------- layout */
 
 /**
@@ -309,24 +388,56 @@ export function layout(wCells, hCells) {
     { scale: 4, y: horizon + Math.round(depth * 0.86) },
   ];
 
-  // THE FALLS, on the left. A rock mass rising out of the ground with a notch
-  // in the top for the river to come over, water down the notch, and a pool on
-  // the ground plane in front of the rock — not a rectangle bolted to the edge.
-  const cliffW = Math.max(11, Math.round(w * 0.115));
-  const fallW = Math.max(4, Math.round(cliffW * 0.42));
-  const cliffTop = Math.max(1, Math.round(h * 0.12));
-  const poolY = horizon + Math.round(depth * 0.34);
+  // THE STREAM. A channel running the full width, in the gap between the middle
+  // and front grazing lanes. Because the lanes are discrete baselines, nothing
+  // ever walks through it: lane 1 grazes behind the water, lane 2 in front of
+  // it, and the stream is what separates them.
+  // Derived from the GAP between those two lanes, not from the canvas: a fixed
+  // fraction of the depth overflowed the gap on a short viewport and the front
+  // lane ended up grazing in the water.
+  const laneGap = lanes[2].y - lanes[1].y;
+  const streamH = Math.max(3, Math.min(Math.round(laneGap * 0.4), Math.round(depth * 0.12)));
+
+  // THE FALLS — short and wide, off a rock shelf, boulders on BOTH sides of the
+  // water, feeding the stream. It was a full-height cliff before, which read as
+  // a wall you were standing against rather than as a waterfall in a clearing:
+  // 112 cells of drop and 15 across. This is roughly 40 by 21.
+  const fallW = Math.max(6, Math.round(w * 0.065));
+  const shelfW = Math.max(fallW + 12, Math.round(w * 0.17));
+  // Set back from the left edge rather than bleeding off it, so there is bank
+  // in front of the rock and the falls sit IN the clearing instead of at its
+  // border. A couple of cells is all it takes to stop reading as a cut-off.
+  const shelfX = Math.round(w * 0.025);
+
+  // The meander: how far the channel swings, and how long a swing is. The
+  // amplitude is bounded by the lane gap — the channel and both its banks have
+  // to stay between the middle lane's feet and the front lane's at every x, or
+  // something ends up grazing in the water.
+  const amp = Math.max(1, Math.floor((laneGap - streamH) / 2) - 3);
+  const stream = {
+    y: lanes[1].y + Math.round(laneGap / 2),
+    h: streamH,
+    amp,
+    period: Math.max(24, Math.round(w * 0.62)),
+    // Anchored on the middle of the falls, at the meander's FAR extreme.
+    anchorX: shelfX + Math.round(shelfW / 2),
+  };
+
   const fall = {
-    cliffX: 0,
-    cliffW,
-    top: cliffTop,
-    // The notch sits inboard of the cliff's right edge, so water falls down the
-    // face rather than off the corner.
-    x: Math.round(cliffW * 0.42),
+    shelfX,
+    shelfW,
+    // The lip sits well down into the middle ground — below the far treeline,
+    // above the stream. At 0.08 of the depth the drop still came to 59% of the
+    // ground, which is a cliff wearing a waterfall's hat.
+    top: horizon + Math.round(depth * 0.30),
+    // Water centred in the shelf, with rock either side of it.
+    x: shelfX + Math.round((shelfW - fallW) / 2),
     w: fallW,
-    poolY,
-    poolH: Math.max(4, Math.round(depth * 0.13)),
-    poolW: Math.round(cliffW * 1.35),
+    // The pool meets the channel where the channel actually IS at the falls —
+    // which, because of the anchor above, is its furthest point back.
+    poolY: streamCenter(shelfX + Math.round(shelfW / 2), stream) - Math.floor(streamH / 2) - 1,
+    poolH: streamH + 4,
+    poolW: Math.round(shelfW * 1.1),
   };
 
   // The hero tree: right side, rooted in the middle lane so the front lane's
@@ -342,11 +453,11 @@ export function layout(wCells, hCells) {
     shape: TREE,
   };
 
-  // Three on the skyline at scale 1, standing in the back lane. Scale 1 is the
+  // Two on the skyline at scale 1, standing in the back lane. Scale 1 is the
   // point: at 32 cells they are a THIRD of the hero, which is what makes them
-  // read as far away rather than as saplings planted next to it.
+  // read as far away rather than as saplings planted next to it. The third one
+  // used to stand at 0.27 and was removed — it crowded the falls.
   const farTrees = [
-    { scale: 1, x: Math.round(w * 0.27), baseY: lanes[0].y - 2 },
     { scale: 1, x: Math.round(w * 0.37), baseY: lanes[0].y },
     { scale: 1, x: Math.round(w * 0.53), baseY: lanes[0].y - 1 },
   ];
@@ -357,7 +468,7 @@ export function layout(wCells, hCells) {
   // bar, which floats across the middle of the sky.
   const sky = { cx: Math.round(w * 0.88), cy: Math.round(horizon * 0.24), r: 5 };
 
-  return { w, h, horizon, depth, lanes, fall, tree, farTrees, sky };
+  return { w, h, horizon, depth, lanes, fall, stream, tree, farTrees, sky };
 }
 
 /**
@@ -368,7 +479,7 @@ export function layout(wCells, hCells) {
 // one span: a caller must not have to know that, and per-lane bounds are the
 // obvious next change.
 export function laneBounds(scene, _laneIndex) {
-  const left = scene.fall.cliffX + scene.fall.cliffW + 2;
+  const left = scene.fall.shelfX + scene.fall.shelfW + 2;
   return { min: left, max: Math.max(left + 8, scene.w - 4) };
 }
 
@@ -634,47 +745,65 @@ export function startScene(options) {
       const lane = Math.floor(r() * 3);
       const s = lane === 0 ? 1 : lane === 1 ? 1 : 2;
       const y = scene.lanes[lane].y - Math.round(r() * 2);
-      // Nothing grows on the rock, and nothing grows in the pool.
-      if (x < f.cliffX + f.cliffW + 1) continue;
-      if (x < f.cliffX + f.poolW + 2 && y > f.poolY - 2) continue;
+      // Nothing grows on the rock, in the pool, or in the stream — and the
+      // stream is a curve, so the exclusion has to be evaluated at this x.
+      if (x < f.shelfX + f.shelfW + 1) continue;
+      if (x < f.shelfX + f.poolW + 2 && y > f.poolY - 2) continue;
+      const edges = streamEdges(x, scene.stream);
+      if (y > edges.top - 3 && y < edges.bottom + 3) continue;
       const pick = r();
       const shape = pick < 0.2 ? FLOWERS[i % 2] : TUFTS[i % TUFTS.length];
       stamp(shape, x, y - shape.h * s, s);
     }
   }
 
-  /** The right-hand edge of the rock, stepped rather than ruled. */
-  function cliffEdgeAt(y, f) {
-    const t = (y - f.top) / Math.max(1, scene.h - f.top);
-    // Widens toward the base like a real face, in whole cells, with two notches
-    // cut out of it so the silhouette is not a wedge.
-    const base = f.cliffW * (0.72 + 0.28 * t);
-    const step = ((y * 7) % 13 < 4 ? 1 : 0) + ((y * 5) % 23 < 3 ? 1 : 0);
-    return Math.round(base) - step;
+  /**
+   * THE STREAM, painted before the falls so the falls land on top of it.
+   *
+   * A channel across the full width with both banks wobbling by whole cells.
+   * It sits in the gap between the middle and front lanes, which is why nothing
+   * ever appears to wade: lane 1 grazes behind it, lane 2 in front of it.
+   */
+  function paintStream() {
+    const s = scene.stream;
+    for (let x = 0; x < scene.w; x++) {
+      const { top, bottom } = streamEdges(x, s);
+      // Wet mud at the far bank, darker grass at the near one. Two cells, so
+      // the meander has an edge to read against on both sides.
+      fill("rockDark", x, top - 1, 1, 1);
+      fill("grassDark", x, bottom, 1, 2);
+      for (let y = top; y < bottom; y++) fill(streamCell(x, y, tick), x, y, 1, 1);
+    }
   }
 
   function paintFalls() {
     const f = scene.fall;
+    const shelfBottom = f.poolY + 2;
 
-    // The rock mass, drawn a row at a time so the edge can step. It STOPS at
-    // the pool rather than running off the bottom of the screen: the cliff is
-    // behind the clearing, so the ground plane has to come forward over its
-    // foot. A rock face that reaches the bottom edge reads as a wall you are
-    // standing against, which is the opposite of depth.
-    const foot = f.poolY + Math.round(f.poolH * 0.5);
-    for (let y = f.top; y < foot; y++) {
-      const edge = cliffEdgeAt(y, f);
-      fill("rock", f.cliffX, y, edge, 1);
-      fill("rockShade", f.cliffX + edge - 2, y, 2, 1);
-      // Strata: a darker seam every so often reads as rock rather than as a
-      // grey rectangle. Irregular spacing — evenly ruled lines read as paper.
-      if ((y * 5) % 17 < 1) fill("rockDark", f.cliffX, y, Math.max(1, edge - 3), 1);
+    // THE SHELF: rock on BOTH sides of the water, not a face behind it. A left
+    // block, a right block, and the water in the gap between them. Each inner
+    // edge steps out toward the base in whole cells, the way water cuts rock,
+    // so the gap is a gorge rather than a slot milled through a wall.
+    for (let y = f.top; y < shelfBottom; y++) {
+      const k = (y - f.top) / Math.max(1, shelfBottom - f.top);
+      const step = ((y * 7) % 13 < 4 ? 1 : 0) + ((y * 5) % 23 < 3 ? 1 : 0);
+      const leftEdge = Math.max(1, f.x - Math.round(k * 3) - step);
+      const rightStart = Math.min(f.shelfW - 1, f.x + f.w + Math.round(k * 3) + step);
+      fill("rock", f.shelfX, y, leftEdge, 1);
+      fill("rockShade", f.shelfX + leftEdge - 2, y, 2, 1);
+      fill("rock", rightStart, y, f.shelfW - rightStart, 1);
+      fill("rockShade", rightStart, y, 2, 1);
+      // Strata at irregular spacing — evenly ruled lines read as paper.
+      if ((y * 5) % 17 < 1) {
+        fill("rockDark", f.shelfX, y, Math.max(1, leftEdge - 2), 1);
+        fill("rockDark", rightStart + 2, y, Math.max(1, f.shelfW - rightStart - 2), 1);
+      }
     }
-    // The lip of the notch the river comes over.
-    fill("rockDark", f.x - 2, f.top, f.w + 4, 2);
+    // The lip the water comes over, spanning both shoulders.
+    fill("rockDark", f.shelfX, f.top, f.shelfW, 2);
 
-    // The fall, from the notch down to the pool. Two rows of pure foam at the
-    // top is what makes it read as falling rather than as a blue ribbon.
+    // The fall itself. Two rows of pure foam at the lip is what makes it read
+    // as falling rather than as a blue ribbon hung off a rock.
     const top = f.top + 1;
     for (let y = top; y < f.poolY; y++) {
       for (let x = f.x; x < f.x + f.w; x++) {
@@ -682,23 +811,36 @@ export function startScene(options) {
       }
     }
 
-    // The pool: a lens on the ground plane, narrowing at both ends, so it sits
-    // in the grass instead of being a bar ruled across it.
+    // The pool, which is where the fall BECOMES the stream — so it is drawn as
+    // a widening of the channel, not as a separate puddle parked beside it.
     for (let y = f.poolY; y < f.poolY + f.poolH; y++) {
       const k = (y - f.poolY) / Math.max(1, f.poolH - 1);
-      const inset = Math.round(Math.abs(k - 0.5) * 2 * f.poolW * 0.22);
-      const x0 = f.cliffX + inset;
-      const x1 = f.cliffX + f.poolW - inset;
-      for (let x = x0; x < x1; x++) fill(poolCell(x, y, tick), x, y, 1, 1);
+      const inset = Math.round(Math.abs(k - 0.5) * 2 * f.poolW * 0.18);
+      for (let x = f.shelfX + inset; x < f.shelfX + f.poolW - inset; x++) {
+        fill(poolCell(x, y, tick), x, y, 1, 1);
+      }
     }
 
-    // Spray where the two meet, and a boulder for the water to break on.
-    for (let y = f.poolY - 4; y < f.poolY + 2; y++) {
-      for (let x = f.x - 4; x < f.x + f.w + 4; x++) {
+    // Spray at the impact line.
+    for (let y = f.poolY - 4; y < f.poolY + 3; y++) {
+      for (let x = f.x - 5; x < f.x + f.w + 5; x++) {
         if (sprayAt(x, y, tick)) fill("mist", x, y, 1, 1);
       }
     }
-    stamp(ROCK, f.x + f.w + 1, f.poolY - 5, 1);
+
+    // Boulders in the pool and greenery massed on both shoulders. The shoulders
+    // are the one place in the clearing where something other than grass grows,
+    // and that is what stops the rock reading as masonry.
+    stamp(BOULDER, Math.max(0, f.x - 4), f.poolY - 3, 1);
+    stamp(ROCK, f.x + f.w + 1, f.poolY - 4, 1);
+    stamp(BUSH, Math.max(0, f.x - 14), f.top - BUSH.h * 2 + 2, 2);
+    stamp(BUSH, Math.min(f.shelfW - 14, f.x + f.w + 4), f.top - BUSH.h * 2 + 3, 2);
+    stamp(BUSH, Math.max(0, f.x - 9), f.poolY - BUSH.h - 4, 1);
+    stamp(BUSH, f.x + f.w + 7, f.poolY - BUSH.h - 3, 1);
+    for (let i = 0; i < 4; i++) {
+      stamp(TUFTS[i % TUFTS.length], f.shelfX + 1 + i * 4, f.top - 3, 1);
+      stamp(TUFTS[(i + 1) % TUFTS.length], f.shelfW - 5 - i * 4, f.top - 3, 1);
+    }
   }
 
   function paintGrazer(g) {
@@ -731,6 +873,7 @@ export function startScene(options) {
     for (const t of scene.farTrees) {
       stamp(t.shape || TREE, t.x, t.baseY - TREE.h * t.scale, t.scale);
     }
+    paintStream();
     paintFalls();
     paintTufts();
     const sorted = grazers.slice().sort((a, b) => scene.lanes[a.lane].y - scene.lanes[b.lane].y);
