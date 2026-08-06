@@ -1,12 +1,13 @@
 import { beforeAll, describe, expect, it } from "vitest";
 
-import { UPEG_BACKGROUND_COLORS, UPEG_COLORS, gridFromSeed } from "../upeg.js";
+import { UPEG_BACKGROUND_COLORS, UPEG_COLORS, decodeSeed, gridFromMetadata, gridFromSeed } from "../upeg.js";
 import {
   DEFAULT_SCALE,
   DUCK_DROP,
   DUCK_LEAN,
   FLYER_EYE,
   FLYER_INK,
+  FLYER_LAYERS,
   FLYER_PIECE_ID,
   FLYER_SEED,
   FLYER_WING_CYCLE,
@@ -28,6 +29,7 @@ import {
   topLine,
   unionBounds,
 } from "../sprite.js";
+import { contrastRatio } from "../game.js";
 import fixtures from "../../../src/lib/upeg/__tests__/fixtures.json";
 import alive from "../../data/upeg-alive.json";
 
@@ -416,16 +418,17 @@ describe("sprite.js — the crouch is a neck pivot", () => {
 describe("sprite.js — the flyer", () => {
   it("is built from real alive piece #39, with the broad swept wing", () => {
     expect(String(FLYER_SEED)).toBe(String((alive as Record<string, string>)[String(FLYER_PIECE_ID)]));
-    const [raised] = buildFlyerGrids();
-    expect(raised.meta.wings).toBe(1);
-    expect(raised.meta.horn).toBe(5);
-    expect(FLYER_WING_CYCLE).toEqual([1, 2]);
+    const [base] = buildFlyerGrids();
+    // The flatter of the two swept wings leads, so the resting frame is level.
+    expect(base.meta.wings).toBe(2);
+    expect(base.meta.horn).toBe(5);
+    expect(FLYER_WING_CYCLE).toEqual([2, 1]);
   });
 
-  it("flaps between wings 1 and wings 2 and changes nothing else", () => {
+  it("flaps between the two swept wings and changes nothing else", () => {
     const [a, b] = buildFlyerGrids();
-    expect(a.meta.wings).toBe(1);
-    expect(b.meta.wings).toBe(2);
+    expect(a.meta.wings).toBe(2);
+    expect(b.meta.wings).toBe(1);
     const { wings: _aw, ...restA } = a.meta;
     const { wings: _bw, ...restB } = b.meta;
     expect(restA).toEqual(restB);
@@ -433,11 +436,69 @@ describe("sprite.js — the flyer", () => {
     expect(JSON.stringify(a.cells)).not.toBe(JSON.stringify(b.cells));
   });
 
+  it("flies level: the hind legs are off, everything else is the real piece", () => {
+    const meta = decodeSeed(FLYER_SEED);
+    expect(FLYER_LAYERS).toEqual({ ground: 0, legsBack: 0 });
+    for (const g of buildFlyerGrids()) {
+      // The trailing hind legs are what made it read as a rearing horse...
+      expect(g.meta.legsBack).toBe(0);
+      // ...and the gathered forelegs stay, so it is still a horse with its
+      // legs tucked up rather than a wing with a head on it.
+      expect(g.meta.legsFront).toBe(meta.legsFront);
+      expect(g.meta.legsFront).toBeGreaterThan(0);
+      expect(g.meta.horn).toBe(meta.horn);
+      expect(g.meta.tail).toBe(meta.tail);
+      expect(g.meta.body).toBe(meta.body);
+      expect(g.meta.eyes).toBe(meta.eyes);
+    }
+  });
+
+  it("reads measurably more level than the full piece did", () => {
+    // "Tilt" as a number: regress each column's centre of mass against x on the
+    // mirrored silhouette. Positive means the shape falls away from nose to
+    // tail — which is exactly what "rearing" looks like.
+    const tilt = (cells: (string | null)[][]) => {
+      const pts: [number, number][] = [];
+      for (let x = 0; x < cells[0].length; x++) {
+        let sum = 0;
+        let n = 0;
+        for (let y = 0; y < cells.length; y++) {
+          if (cells[y][x] !== null) {
+            sum += y;
+            n++;
+          }
+        }
+        if (n) pts.push([x, sum / n]);
+      }
+      const mx = pts.reduce((a, p) => a + p[0], 0) / pts.length;
+      const my = pts.reduce((a, p) => a + p[1], 0) / pts.length;
+      let num = 0;
+      let den = 0;
+      for (const [x, y] of pts) {
+        num += (x - mx) * (y - my);
+        den += (x - mx) ** 2;
+      }
+      return num / den;
+    };
+    const meta = decodeSeed(FLYER_SEED);
+    for (const wings of FLYER_WING_CYCLE) {
+      const rearing = tilt(mirrorCells(shadowCells(gridFromMetadata({ ...meta, ground: 0, wings }))));
+      const level = tilt(mirrorCells(shadowCells(gridFromMetadata({ ...meta, ...FLYER_LAYERS, wings }))));
+      expect(rearing).toBeGreaterThan(0.29); // the pose the owner called too tilted
+      expect(level).toBeLessThan(0.23);
+      expect(level).toBeGreaterThan(0.1); // still a creature, not a plank
+      expect(level).toBeLessThan(rearing * 0.75); // a third of the tilt, gone
+    }
+    // The base frame is the flatter of the two — that is why it leads.
+    const flat = (w: number) => tilt(mirrorCells(shadowCells(gridFromMetadata({ ...meta, ...FLYER_LAYERS, wings: w }))));
+    expect(flat(FLYER_WING_CYCLE[0])).toBeLessThan(flat(FLYER_WING_CYCLE[1]));
+  });
+
   it("carries no ground strip: a creature in flight stands on nothing", () => {
     for (const g of buildFlyerGrids()) expect(g.meta.ground).toBe(0);
   });
 
-  it("paints every cell black but the eye, which stays light", () => {
+  it("paints every cell black but the eye, which is red", () => {
     const grids = buildFlyerGrids();
     let eyes = 0;
     for (const g of grids) {
@@ -453,6 +514,21 @@ describe("sprite.js — the flyer", () => {
     // The eye is what gives the silhouette presence; it must actually be there.
     expect(eyes).toBeGreaterThan(0);
     expect(FLYER_INK).toBe("#0b0b0d");
+    expect(FLYER_EYE).toBe("#e5484d");
+  });
+
+  it("picks a red the eye stays legible in, on the body AND on the board", () => {
+    // The eye has two very different neighbours: the near-black silhouette it
+    // sits inside, and the board that shows through around the creature. A red
+    // that only clears one of them is a red that vanishes half the time.
+    expect(contrastRatio(FLYER_EYE, FLYER_INK)).toBeGreaterThan(3.5);
+    expect(contrastRatio(FLYER_EYE, "#ffffff")).toBeGreaterThan(3.5);
+    expect(contrastRatio(FLYER_EYE, "#f4f3f5")).toBeGreaterThan(3.5); // the shipped light board
+    // ...and it is a red: dominant red channel, and not a pink or an orange.
+    const [r, g, b] = [1, 3, 5].map((i) => parseInt(FLYER_EYE.slice(i, i + 2), 16));
+    expect(r).toBeGreaterThan(g * 1.8);
+    expect(r).toBeGreaterThan(b * 1.8);
+    expect(Math.abs(g - b)).toBeLessThan(24);
   });
 
   it("keeps its two sentinel colours distinct from each other and the backdrop", () => {

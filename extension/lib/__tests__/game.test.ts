@@ -2,6 +2,10 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
+  BLIP_ATTACK,
+  BLIP_GAIN,
+  BLIP_HZ,
+  BLIP_SECONDS,
   DEFAULTS,
   ETH_LARGE,
   ETH_SMALL,
@@ -9,6 +13,8 @@ import {
   FLYER_LANES,
   HIGH_SCORE_KEY,
   SPAWN_PATTERNS,
+  bannerLines,
+  bannerPlacement,
   clusterShape,
   collides,
   contrastRatio,
@@ -29,6 +35,7 @@ import {
   patternWeight,
   pickLane,
   pickPattern,
+  playBlip,
   readable,
   readableFacets,
   rectsOverlap,
@@ -95,6 +102,38 @@ describe("game.js — jump physics", () => {
     const r = { y: 5, vy: 3, grounded: false, airTime: 0.1 };
     expect(stepRunner(r, 0, G)).toEqual({ ...r });
     expect(stepRunner(r, -1, G)).toEqual({ ...r });
+  });
+
+  it("is the SNAPPIER arc the owner asked for: same height, less time in it", () => {
+    // The shipped tuning, pinned. The owner asked for quicker acceleration on
+    // the jump, so both numbers went up together: 14.5 -> 17.2 H/s^2 of
+    // gravity, 6.2 -> 6.75 H/s of takeoff.
+    expect(DEFAULTS.gravity).toBe(17.2);
+    expect(DEFAULTS.jumpVelocity).toBe(6.75);
+
+    const apex = DEFAULTS.jumpVelocity ** 2 / (2 * DEFAULTS.gravity);
+    const hang = (2 * DEFAULTS.jumpVelocity) / DEFAULTS.gravity;
+    const rise = DEFAULTS.jumpVelocity / DEFAULTS.gravity;
+
+    // Quicker: gravity is up a fifth, and the rise and the fall are ~8% shorter.
+    expect(DEFAULTS.gravity / 14.5).toBeGreaterThan(1.15);
+    expect(hang).toBeLessThan(0.79);
+    expect(hang).toBeGreaterThan(0.75); // ...but still an arc, not a hop
+    expect(rise).toBeLessThan(0.4);
+    expect(hang / ((2 * 6.2) / 14.5)).toBeLessThan(0.93);
+
+    // NOT taller. The apex is measured against two other things — the low
+    // flyer lane sits on the crouch only while the arc stays under ~1.33 H,
+    // and a short board has to hold the whole arc — so it stays put.
+    expect(apex).toBeGreaterThan(1.3);
+    expect(apex).toBeLessThan(1.334);
+    expect(Math.abs(apex - 6.2 ** 2 / (2 * 14.5))).toBeLessThan(0.01);
+
+    // ...and the simulated arc agrees with the closed form it is tuned from.
+    const H = 84;
+    const sim = simulateJump(1 / 240, DEFAULTS.gravity * H, DEFAULTS.jumpVelocity * H);
+    expect(sim.apex / H).toBeCloseTo(apex, 2);
+    expect(sim.hangTime).toBeCloseTo(hang, 2);
   });
 });
 
@@ -729,6 +768,52 @@ describe("game.js — the pattern set", () => {
     }
   });
 
+  it("left nothing unclearable when the jump got snappier", () => {
+    // THE GUARD, RE-RUN. A quicker arc covers less ground while airborne, so
+    // `clearMargin` came down with it (1.25 -> 1.15). This is what says that
+    // trade did not cost the board a pattern: every pattern still becomes
+    // clearable inside the speed range, for every geometry that ships.
+    expect(DEFAULTS.clearMargin).toBe(1.15);
+    for (const geo of GEOMETRIES) {
+      for (const pattern of SPAWN_PATTERNS) {
+        const at = SPEEDS.find((s) => patternIsClearable(pattern, s, geo));
+        expect([pattern.name, geo.label, at !== undefined]).toEqual([pattern.name, geo.label, true]);
+        // ...and once clearable it stays clearable: a faster board is never a
+        // board that takes an obstacle away again.
+        for (const s of SPEEDS) {
+          if (s < at!) continue;
+          expect([pattern.name, geo.label, s, patternIsClearable(pattern, s, geo)]).toEqual([
+            pattern.name,
+            geo.label,
+            s,
+            true,
+          ]);
+        }
+      }
+      // The opener is clearable from the very first second, so `usablePatterns`
+      // never has to fall back to something the guard would have rejected.
+      expect([geo.label, patternIsClearable(SPAWN_PATTERNS[0], DEFAULTS.baseSpeed, geo)]).toEqual([
+        geo.label,
+        true,
+      ]);
+    }
+  });
+
+  it("kept the pacing: the same patterns arrive at the same speeds as before", () => {
+    // The floaty arc with a 25% margin, and the snappy arc with a 15% one, are
+    // the same board. This measures it rather than asserting it: for every
+    // pattern, the speed at which it becomes clearable moved by at most
+    // 0.2 H/s — under one tick of the ramp.
+    const before = { ...DEFAULTS, gravity: 14.5, jumpVelocity: 6.2, clearMargin: 1.25 };
+    const geo = GEOMETRIES[3];
+    for (const pattern of SPAWN_PATTERNS) {
+      const was = SPEEDS.find((s) => patternIsClearable(pattern, s, geo, before)) ?? Infinity;
+      const now = SPEEDS.find((s) => patternIsClearable(pattern, s, geo)) ?? Infinity;
+      expect([pattern.name, Number.isFinite(was), Number.isFinite(now)]).toEqual([pattern.name, true, true]);
+      expect([pattern.name, Math.abs(now - was) <= 0.2]).toEqual([pattern.name, true]);
+    }
+  });
+
   it("degrades to the easiest single rather than spawning nothing", () => {
     // A hypothetical piece so short that nothing is comfortably clearable.
     const tiny = { spriteH: 8, spriteW: 200, unit: 8 };
@@ -751,7 +836,9 @@ function dims(scale: number, runCells = 21) {
     spriteW: 22 * scale,
     duckH: (runCells - DUCK_DROP) * scale,
     duckW: 22 * scale,
-    flyerH: 22 * flyerScaleFor(scale),
+    // The flyer's content box: 22 cells wide, 21 tall since the hind legs
+    // came off (sprite.js FLYER_LAYERS).
+    flyerH: 21 * flyerScaleFor(scale),
     flyerW: 22 * flyerScaleFor(scale),
   };
 }
@@ -778,8 +865,8 @@ describe("game.js — duck geometry", () => {
     const stand = boxAt(d, 0, false);
     const crouch = boxAt(d, 0, true);
     expect(crouch.w).toBe(stand.w); // the crouch is not a shrunk unicorn
-    expect(stand.h - crouch.h).toBe(DUCK_DROP * 4); // 4 cells at the 4x scale
-    expect(crouch.h).toBe(68);
+    expect(stand.h - crouch.h).toBe(DUCK_DROP * 4); // 5 cells at the 4x scale
+    expect(crouch.h).toBe(64);
     // Shorter by enough to matter, but still most of a unicorn.
     expect(crouch.h / stand.h).toBeLessThan(0.9);
     expect(crouch.h / stand.h).toBeGreaterThan(0.7);
@@ -874,6 +961,59 @@ describe("game.js — flyer lanes", () => {
     expect(collides(boxAt(d, apex, false), flyerAt(d, lanes.high))).toBe(true);
   });
 
+  it("flies the low lane closer to the ground than it used to", () => {
+    // THE OWNER'S NOTE: the low flyer should skim lower. `laneLow` is only a
+    // request — the clamp puts the lane on the crouch, because the flyer's
+    // belly has to pass over a ducking runner's back — so what actually moved
+    // it was a deeper crouch (DUCK_DROP 4 -> 5) and half the boundary slack
+    // (laneMargin 0.04 -> 0.02 H). This pins the result, not the request.
+    const before = { ...DEFAULTS, duckDrop: 4, laneMargin: 0.04 };
+    for (const scale of [4, 8]) {
+      for (const cells of runHeights) {
+        const d = dims(scale, cells);
+        const old = { ...d, duckH: (cells - 4) * scale };
+        const label = `${cells} cells @ ${scale}x`;
+        const now = flyerLanes(d.spriteH, d.duckH, d.flyerH).low / d.spriteH;
+        const was = flyerLanes(old.spriteH, old.duckH, old.flyerH, before).low / old.spriteH;
+        expect([label, now < was]).toEqual([label, true]);
+        expect([label, was - now > 0.05]).toEqual([label, true]); // 5% of a sprite lower
+        expect([label, now < 0.75]).toEqual([label, true]);
+        // ...and it is the crouch that places it, not the tuning constant.
+        expect([label, now > DEFAULTS.laneLow]).toEqual([label, true]);
+      }
+    }
+    // Nowhere, at any scale, does it end up higher than the runner's shoulder.
+    for (const scale of scales) {
+      for (const cells of runHeights) {
+        const d = dims(scale, cells);
+        const lanes = flyerLanes(d.spriteH, d.duckH, d.flyerH);
+        expect([scale, cells, lanes.low / d.spriteH < 0.9]).toEqual([scale, cells, true]);
+      }
+    }
+  });
+
+  it("never flies a lane into the ground", () => {
+    // Every lane is a height above the ground line, measured to the BOTTOM of
+    // the flyer's box: if one ever went negative the creature would be drawn
+    // through the floor.
+    for (const scale of scales) {
+      for (const cells of runHeights) {
+        const d = dims(scale, cells);
+        const lanes = flyerLanes(d.spriteH, d.duckH, d.flyerH);
+        for (const name of FLYER_LANES) {
+          const lane = lanes[name as keyof typeof lanes];
+          expect([scale, cells, name, lane > 0]).toEqual([scale, cells, name, true]);
+          expect([scale, cells, name, flyerAt(d, lane).y + d.flyerH < GROUND]).toEqual([
+            scale,
+            cells,
+            name,
+            true,
+          ]);
+        }
+      }
+    }
+  });
+
   it("keeps a standing runner hit by the low lane even if the art shrinks", () => {
     // A hypothetical stubby flyer: the low lane gives up unjumpability rather
     // than the promise that a standing runner is hit.
@@ -898,13 +1038,13 @@ describe("game.js — flyer lanes", () => {
 
 describe("game.js — flyer threshold", () => {
   it("holds every flyer back until the score threshold", () => {
-    expect(DEFAULTS.flyerScore).toBe(450);
-    for (const score of [0, 1, 100, 449]) {
+    expect(DEFAULTS.flyerScore).toBe(350);
+    for (const score of [0, 1, 100, 349]) {
       expect(mayFly(score)).toBe(false);
       for (const r of [0, 0.1, 0.31, 0.5, 0.99]) expect(spawnsFlyer(r, score)).toBe(false);
     }
-    expect(mayFly(450)).toBe(true);
-    expect(mayFly(4500)).toBe(true);
+    expect(mayFly(350)).toBe(true);
+    expect(mayFly(3500)).toBe(true);
   });
 
   it("mixes flyers into roughly a third of the spawns after that", () => {
@@ -914,6 +1054,124 @@ describe("game.js — flyer threshold", () => {
     for (let i = 0; i < n; i++) if (spawnsFlyer(rng(), 1000)) flyers++;
     expect(flyers / n).toBeGreaterThan(DEFAULTS.flyerChance - 0.05);
     expect(flyers / n).toBeLessThan(DEFAULTS.flyerChance + 0.05);
+  });
+});
+
+describe("game.js — the banner", () => {
+  it("is ASCII, and says nothing at all while the run is live", () => {
+    // The old ready banner was "SPACE OR TAP TO RUN · ↓ TO DUCK". The arrow and
+    // the interpunct are not in every fallback monospace font, so they came out
+    // as tofu on some machines AND changed the measured width that centres the
+    // string. Words, not glyphs.
+    const all = [...bannerLines("ready"), ...bannerLines("over", 12, 30), ...bannerLines("running")];
+    expect(all.length).toBeGreaterThan(0);
+    for (const line of all) {
+      expect(line).toMatch(/^[\x20-\x7E]+$/);
+      expect(line).not.toMatch(/[^\x00-\x7F]/);
+    }
+    expect(bannerLines("running")).toEqual([]);
+    expect(bannerLines("running", 999, 999)).toEqual([]);
+    expect(bannerLines("ready")).toHaveLength(2);
+    expect(bannerLines("ready")[0]).toMatch(/SPACE/);
+    expect(bannerLines("ready")[1]).toMatch(/DOWN ARROW/); // the arrow, spelled out
+  });
+
+  it("reports the score on a crash, and never a best worse than the score", () => {
+    expect(bannerLines("over", 40, 900)[1]).toBe("SCORE 40   BEST 900");
+    // A first run that beat the stored best still reads correctly, even before
+    // storage has been written back.
+    expect(bannerLines("over", 900, 40)[1]).toBe("SCORE 900   BEST 900");
+  });
+
+  it("sits above the runner, and stays on a board too short to hold it", () => {
+    const size = 24;
+    const lead = 38;
+    const roomy = bannerPlacement({ lines: 2, size, lead, groundY: 600, spriteH: 168, height: 700 });
+    // Where it wants to be: 1.6 sprite-heights above the ground line.
+    expect(roomy).toBe(Math.round(600 - 168 * 1.6));
+
+    // The board that used to push it off the top: 240 px tall, 168 px runner.
+    const tight = bannerPlacement({ lines: 2, size, lead, groundY: 206, spriteH: 168, height: 240 });
+    expect(tight).toBeGreaterThanOrEqual(0);
+    expect(tight + size).toBeLessThanOrEqual(240);
+
+    // On the board, and off the runner, at any board size we can think of —
+    // including ones far too small for the game to be playable on.
+    for (const height of [80, 140, 240, 400, 900]) {
+      for (const spriteH of [40, 84, 168, 300]) {
+        const groundY = Math.round(height - Math.max(8, height * 0.14));
+        for (const lines of [1, 2]) {
+          const label = `${height}px board, ${spriteH}px runner, ${lines} lines`;
+          const top = bannerPlacement({ lines, size, lead, groundY, spriteH, height });
+          const block = size + lead * (lines - 1);
+          expect([label, top >= 0]).toEqual([label, true]);
+          expect([label, top + size <= height]).toEqual([label, true]);
+          // The block clears the runner's shoulder whenever there is any room
+          // above it at all.
+          const shoulder = Math.round(groundY - spriteH * 0.35);
+          if (shoulder >= block) expect([label, top + block <= shoulder]).toEqual([label, true]);
+          else expect([label, top]).toEqual([label, 0]);
+        }
+      }
+    }
+  });
+});
+
+describe("game.js — the jump blip", () => {
+  const stubNode = (log: string[]) => ({
+    type: "",
+    frequency: { setValueAtTime: (v: number) => log.push(`hz:${v}`) },
+    gain: {
+      setValueAtTime: (v: number, t: number) => log.push(`gain@${t.toFixed(3)}=${v}`),
+      linearRampToValueAtTime: (v: number, t: number) => log.push(`ramp@${t.toFixed(3)}=${v}`),
+      exponentialRampToValueAtTime: (v: number, t: number) => log.push(`exp@${t.toFixed(3)}=${v}`),
+    },
+    connect: () => log.push("connect"),
+    disconnect: () => log.push("disconnect"),
+    start: (t: number) => log.push(`start@${t}`),
+    stop: (t: number) => log.push(`stop@${t.toFixed(3)}`),
+    onended: null as null | (() => void),
+  });
+
+  it("schedules one short square note with a ramped envelope", () => {
+    const log: string[] = [];
+    const audio = {
+      currentTime: 0,
+      destination: {},
+      createOscillator: () => stubNode(log),
+      createGain: () => stubNode(log),
+    };
+    expect(playBlip(audio)).toBe(true);
+    // A few tens of milliseconds, not a tone.
+    expect(BLIP_SECONDS).toBeGreaterThan(0.02);
+    expect(BLIP_SECONDS).toBeLessThan(0.12);
+    expect(log).toContain(`hz:${BLIP_HZ}`);
+    expect(log).toContain(`stop@${BLIP_SECONDS.toFixed(3)}`);
+    // The envelope is what stops it clicking: it starts at ~0, ramps up over
+    // the attack, and is back down before the oscillator is switched off.
+    expect(log.some((l) => l.startsWith("gain@0.000=0.0001"))).toBe(true);
+    expect(log).toContain(`ramp@${BLIP_ATTACK.toFixed(3)}=${BLIP_GAIN}`);
+    expect(log).toContain(`exp@${BLIP_SECONDS.toFixed(3)}=0.0001`);
+    expect(BLIP_ATTACK).toBeLessThan(BLIP_SECONDS / 4);
+    // Quiet: a tick under the run, not a beep at you.
+    expect(BLIP_GAIN).toBeGreaterThan(0);
+    expect(BLIP_GAIN).toBeLessThan(0.12);
+  });
+
+  it("returns false rather than throwing for anything that is not an AudioContext", () => {
+    for (const bad of [null, undefined, {}, 7, "audio", { createOscillator: 1 }]) {
+      expect(playBlip(bad as never)).toBe(false);
+    }
+    // A context that blows up mid-schedule is still not the game's problem.
+    const hostile = {
+      currentTime: 0,
+      destination: {},
+      createOscillator() {
+        throw new Error("no");
+      },
+      createGain: () => ({}),
+    };
+    expect(playBlip(hostile as never)).toBe(false);
   });
 });
 
@@ -970,10 +1228,11 @@ describe("game.js — high score persistence", () => {
 
 /* ------------------------------------------------------------- integration */
 
-type Recorder = { calls: string[] };
+type DrawnText = { text: string; x: number; y: number; font: string; fill: string };
+type Recorder = { calls: string[]; texts: DrawnText[] };
 
 function stubCanvas(): { canvas: HTMLCanvasElement; rec: Recorder } {
-  const rec: Recorder = { calls: [] };
+  const rec: Recorder = { calls: [], texts: [] };
   const canvas = document.createElement("canvas");
   Object.defineProperty(canvas, "clientWidth", { value: 800 });
   Object.defineProperty(canvas, "clientHeight", { value: 240 });
@@ -987,7 +1246,10 @@ function stubCanvas(): { canvas: HTMLCanvasElement; rec: Recorder } {
     clearRect: () => rec.calls.push("clearRect"),
     fillRect: () => rec.calls.push("fillRect"),
     drawImage: () => rec.calls.push("drawImage"),
-    fillText: () => rec.calls.push("fillText"),
+    fillText: (text: string, x: number, y: number) => {
+      rec.calls.push("fillText");
+      rec.texts.push({ text, x, y, font: ctx.font, fill: ctx.fillStyle });
+    },
   };
   canvas.getContext = (() => ctx) as unknown as HTMLCanvasElement["getContext"];
   return { canvas, rec };
@@ -1019,7 +1281,7 @@ function frameSet(scale = 4, runCells = 21) {
         ],
         { cellPx: scale, box: { x: 1, y: 2 + DUCK_DROP, w: 22, h: runCells - DUCK_DROP } },
       ),
-      flyer: Object.assign([fakeFrame(22 * f, 22 * f), fakeFrame(22 * f, 22 * f)], { cellPx: f }),
+      flyer: Object.assign([fakeFrame(22 * f, 21 * f), fakeFrame(22 * f, 21 * f)], { cellPx: f }),
     },
   );
   return frames;
@@ -1380,7 +1642,7 @@ describe("game.js — startGame shell", () => {
     game.stop();
   });
 
-  it("keeps flyers out of the first 450 points, then flies them at three heights", () => {
+  it("keeps flyers out of the first 350 points, then flies them at three heights", () => {
     const { canvas } = stubCanvas();
     let cb: FrameRequestCallback | null = null;
     vi.stubGlobal("requestAnimationFrame", (fn: FrameRequestCallback) => {
@@ -1436,7 +1698,17 @@ describe("game.js — startGame shell", () => {
     game.stop();
   });
 
-  it("stays winnable: an autopilot survives three minutes of the whole ramp", () => {
+  /**
+   * Drive one autopilot run to `ms` and report what it saw.
+   *
+   * `seed` pins `Date.now`, which is where startGame's RNG seed comes from, so
+   * a run is reproducible. It has to be: the board's variety over three minutes
+   * is a sampling question, and the rarest pattern ("range", weight 0.15 early,
+   * and not clearable below 8.5 H/s) misses a given three-minute window often
+   * enough that an unpinned seed made this test fail about one run in four —
+   * before any of this round's changes as well as after.
+   */
+  function autopilotRun(seed: number, ms: number) {
     const { canvas } = stubCanvas();
     let cb: FrameRequestCallback | null = null;
     vi.stubGlobal("requestAnimationFrame", (fn: FrameRequestCallback) => {
@@ -1444,13 +1716,16 @@ describe("game.js — startGame shell", () => {
       return 1;
     });
     vi.stubGlobal("cancelAnimationFrame", () => {});
+    const now = vi.spyOn(Date, "now").mockReturnValue(seed);
 
     const game = startGame({ canvas, frames: frameSet(), palette: ["#ac3232"], reducedMotion: true });
     game.restart();
+    now.mockRestore();
+
     const step = 1000 / 60;
     const spawned: string[] = [];
     const early = new Set<string>();
-    for (let t = step; t < 180_000; t += step) {
+    for (let t = step; t < ms; t += step) {
       if (game.getState() !== "running") break;
       autopilot(game);
       cb!(t);
@@ -1458,19 +1733,212 @@ describe("game.js — startGame shell", () => {
       if (snap.pattern && snap.pattern !== spawned[spawned.length - 1]) spawned.push(snap.pattern);
       if (snap.elapsed < 15 && snap.pattern) early.add(snap.pattern);
     }
-    expect(game.getState()).toBe("running");
-    expect(game.getScore()).toBeGreaterThan(2500);
+    const out = { state: game.getState(), score: game.getScore(), spawned, early };
+    game.stop();
+    return out;
+  }
+
+  it("stays winnable: an autopilot survives three minutes of the whole ramp", () => {
+    const run = autopilotRun(20260806, 180_000);
+    expect(run.state).toBe("running");
+    expect(run.score).toBeGreaterThan(2500);
 
     // ...and the run it survived was a varied one: the whole pattern set turns
     // up over three minutes, never twice in a row, and the first fifteen
     // seconds stay on the openers.
-    expect(new Set(spawned).size).toBe(SPAWN_PATTERNS.length);
-    for (let i = 1; i < spawned.length; i++) expect(spawned[i]).not.toBe(spawned[i - 1]);
-    for (const name of early) {
+    expect(new Set(run.spawned).size).toBe(SPAWN_PATTERNS.length);
+    for (let i = 1; i < run.spawned.length; i++) expect(run.spawned[i]).not.toBe(run.spawned[i - 1]);
+    for (const name of run.early) {
       const pattern = SPAWN_PATTERNS.find((p) => p.name === name)!;
       expect([name, pattern.minRatio * DEFAULTS.baseSpeed <= speedAt(15)]).toEqual([name, true]);
     }
+  });
+
+  it("shows the ready banner, hides it while running, and swaps it on a crash", () => {
+    const { canvas, rec } = stubCanvas();
+    let cb: FrameRequestCallback | null = null;
+    vi.stubGlobal("requestAnimationFrame", (fn: FrameRequestCallback) => {
+      cb = fn;
+      return 1;
+    });
+    vi.stubGlobal("cancelAnimationFrame", () => {});
+    const game = startGame({ canvas, frames: frameSet(), palette: ["#ac3232"], reducedMotion: true });
+
+    // READY: the banner is on the board.
+    cb!(0);
+    expect(game.getState()).toBe("ready");
+    expect(rec.texts.map((t) => t.text)).toEqual(bannerLines("ready"));
+
+    // RUNNING: it is gone, and it stays gone for a whole second of frames.
+    rec.texts.length = 0;
+    window.dispatchEvent(key("keydown", "Space"));
+    expect(game.getState()).toBe("running");
+    for (let t = 16; t < 1000; t += 16) cb!(t);
+    expect(rec.texts).toEqual([]);
+
+    // CRASHED: a different banner, carrying the score.
+    rec.texts.length = 0;
+    for (let t = 1000; t < 40_000 && game.getState() === "running"; t += 16) cb!(t);
+    expect(game.getState()).toBe("over");
+    rec.texts.length = 0;
+    cb!(40_016);
+    expect(rec.texts).toHaveLength(2);
+    expect(rec.texts[0].text).toBe("CRASHED - PRESS SPACE TO RUN AGAIN");
+    expect(rec.texts[1].text).toContain(`SCORE ${game.getScore()}`);
+
+    // ...and pressing Space clears it again in the same frame it restarts in.
+    rec.texts.length = 0;
+    window.dispatchEvent(key("keydown", "Space"));
+    cb!(40_032);
+    expect(game.getState()).toBe("running");
+    expect(rec.texts).toEqual([]);
     game.stop();
+  });
+
+  it("draws the banner in ASCII, centred, and inside the board", () => {
+    const { canvas, rec } = stubCanvas();
+    let cb: FrameRequestCallback | null = null;
+    vi.stubGlobal("requestAnimationFrame", (fn: FrameRequestCallback) => {
+      cb = fn;
+      return 1;
+    });
+    vi.stubGlobal("cancelAnimationFrame", () => {});
+    const game = startGame({ canvas, frames: frameSet(), palette: ["#ac3232"], reducedMotion: true });
+    cb!(0);
+    const snap = game.getSnapshot();
+    for (const t of rec.texts) {
+      expect(t.text).toMatch(/^[\x20-\x7E]+$/); // printable ASCII only — no tofu
+      expect(t.x).toBe(Math.round(canvas.width / 2));
+      expect(t.y).toBeGreaterThanOrEqual(0);
+      expect(t.y).toBeLessThan(snap.groundY - snap.spriteH); // clear of the runner
+      expect(t.font).toMatch(/monospace/);
+    }
+    // Both lines fit on the board at the shipped font size.
+    const size = Math.max(11, Math.round((snap.spriteH / 21) * 2.4));
+    for (const t of rec.texts) expect(t.text.length * size * 0.62).toBeLessThan(canvas.width);
+    game.stop();
+  });
+
+  it("never beeps twice for one jump, and never at all when muted", () => {
+    const scheduled: string[] = [];
+    const node = () => ({
+      type: "",
+      frequency: { setValueAtTime: () => {} },
+      gain: {
+        setValueAtTime: () => {},
+        linearRampToValueAtTime: () => {},
+        exponentialRampToValueAtTime: () => {},
+      },
+      connect: () => {},
+      disconnect: () => {},
+      start: () => scheduled.push("start"),
+      stop: () => {},
+      onended: null,
+    });
+    class FakeAudioContext {
+      static made = 0;
+      currentTime = 0;
+      state = "suspended";
+      destination = {};
+      constructor() {
+        FakeAudioContext.made++;
+      }
+      resume() {
+        this.state = "running";
+        return Promise.resolve();
+      }
+      createOscillator() {
+        return node();
+      }
+      createGain() {
+        return node();
+      }
+      close() {}
+    }
+    vi.stubGlobal("AudioContext", FakeAudioContext);
+    let cb: FrameRequestCallback | null = null;
+    vi.stubGlobal("requestAnimationFrame", (fn: FrameRequestCallback) => {
+      cb = fn;
+      return 1;
+    });
+    vi.stubGlobal("cancelAnimationFrame", () => {});
+    const { canvas } = stubCanvas();
+    const game = startGame({ canvas, frames: frameSet(), palette: [] });
+
+    // The first press STARTS the run — a start is not a jump, and nothing is
+    // built before a user gesture that actually jumps.
+    window.dispatchEvent(key("keydown", "Space"));
+    cb!(16);
+    expect(FakeAudioContext.made).toBe(0);
+    expect(scheduled).toHaveLength(0);
+
+    // One jump, one blip — and the context is only now created.
+    window.dispatchEvent(key("keydown", "Space"));
+    expect(FakeAudioContext.made).toBe(1);
+    expect(scheduled).toHaveLength(1);
+
+    // Mashing mid-air cannot jump, so it cannot blip either.
+    for (let t = 32; t < 300; t += 16) {
+      window.dispatchEvent(key("keydown", "Space"));
+      cb!(t);
+    }
+    expect(scheduled).toHaveLength(1);
+
+    // Muted: still jumps, makes no sound, and builds no more contexts.
+    for (let t = 300; t < 1400; t += 16) cb!(t);
+    expect(game.getSnapshot().runner.grounded).toBe(true);
+    expect(game.setMuted(true)).toBe(true);
+    expect(game.isMuted()).toBe(true);
+    window.dispatchEvent(key("keydown", "Space"));
+    expect(game.getSnapshot().runner.grounded).toBe(false);
+    expect(scheduled).toHaveLength(1);
+    expect(FakeAudioContext.made).toBe(1);
+    expect(game.getSnapshot().muted).toBe(true);
+    game.stop();
+  });
+
+  it("starts muted when the page asks, and never throws without audio", () => {
+    vi.stubGlobal("requestAnimationFrame", () => 1);
+    vi.stubGlobal("cancelAnimationFrame", () => {});
+    // No AudioContext at all — the offline/blocked case. Jumping must be a
+    // no-op soundwise, not an exception.
+    vi.stubGlobal("AudioContext", undefined);
+    vi.stubGlobal("webkitAudioContext", undefined);
+    const { canvas } = stubCanvas();
+    const silent = startGame({ canvas, frames: frameSet(), palette: [], muted: true });
+    expect(silent.isMuted()).toBe(true);
+    expect(silent.setMuted(false)).toBe(false);
+    silent.restart();
+    expect(() => window.dispatchEvent(key("keydown", "Space"))).not.toThrow();
+    expect(silent.getSnapshot().runner.grounded).toBe(false);
+    silent.stop();
+
+    // ...and an AudioContext whose constructor throws (autoplay lockdown).
+    class Hostile {
+      constructor() {
+        throw new Error("blocked");
+      }
+    }
+    vi.stubGlobal("AudioContext", Hostile);
+    const { canvas: c2 } = stubCanvas();
+    const loud = startGame({ canvas: c2, frames: frameSet(), palette: [] });
+    loud.restart();
+    expect(() => window.dispatchEvent(key("keydown", "Space"))).not.toThrow();
+    expect(loud.getSnapshot().runner.grounded).toBe(false);
+    expect(() => loud.stop()).not.toThrow();
+  });
+
+  it("stays winnable on a board it has never seen before", () => {
+    // Survival is not a property of one lucky seed. Four different boards, a
+    // minute each: the snappier arc has to answer all of them.
+    for (const seed of [1, 7, 4242, 65535]) {
+      const run = autopilotRun(seed, 60_000);
+      expect([seed, run.state]).toEqual([seed, "running"]);
+      expect([seed, run.score > 500]).toEqual([seed, true]);
+      for (let i = 1; i < run.spawned.length; i++) {
+        expect([seed, run.spawned[i]]).not.toEqual([seed, run.spawned[i - 1]]);
+      }
+    }
   });
 });
 

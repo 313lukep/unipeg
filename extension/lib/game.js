@@ -996,14 +996,16 @@ export function bannerLines(state, score = 0, high = 0) {
  * testable without a canvas.
  */
 export function bannerPlacement({ lines, size, lead, groundY, spriteH, height }) {
-  const n = Math.max(1, lines);
-  const block = size + lead * (n - 1);
-  const ceiling = Math.round(size * 0.9);
+  const block = size + lead * (Math.max(1, lines) - 1);
   // Below this the text would be drawn over the runner itself.
   const shoulder = Math.round(groundY - spriteH * 0.35);
-  const lowest = Math.max(ceiling, Math.min(shoulder, Math.round(height)) - block);
+  // The lowest first baseline whose whole block still sits above the runner
+  // and on the canvas. On a board with no room at all this collapses to 0,
+  // which is the only honest answer: draw from the very top.
+  const hi = Math.max(0, Math.min(Math.round(height), shoulder) - block);
+  const lo = Math.min(Math.round(size * 0.9), hi); // top padding, when it fits
   const want = Math.round(groundY - spriteH * 1.6);
-  return Math.min(Math.max(want, ceiling), lowest);
+  return Math.min(Math.max(want, lo), hi);
 }
 
 /**
@@ -1164,7 +1166,8 @@ export function startGame({
   function reset(next = "ready") {
     state = next;
     runner = { y: 0, vy: 0, grounded: true, airTime: 0, jumped: false };
-    ducking = false;
+    // `ducking` is deliberately NOT cleared: it mirrors whether the key is
+    // physically down, and a player who restarts still holding Down means it.
     obstacles = [];
     elapsed = 0;
     distance = 0;
