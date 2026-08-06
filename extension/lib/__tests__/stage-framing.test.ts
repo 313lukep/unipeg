@@ -20,8 +20,10 @@ import { DEFAULTS } from "../game.js";
 import { DEFAULT_SCALE, flyerScaleFor } from "../sprite.js";
 
 const ROOT = new URL("../../", import.meta.url).pathname;
-const PAGE_CSS = readFileSync(`${ROOT}pages/page.css`, "utf8");
-const BUILD_PLAYABLE = readFileSync(`${ROOT}tools/build-playable.mjs`, "utf8");
+/** Both files carry block comments between declarations; drop them first. */
+const source = (path: string) => readFileSync(`${ROOT}${path}`, "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
+const PAGE_CSS = source("pages/page.css");
+const BUILD_PLAYABLE = source("tools/build-playable.mjs");
 
 /** Headroom the framing must keep above the apex, as a share of board height. */
 const MIN_HEADROOM = 0.15;
