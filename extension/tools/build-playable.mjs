@@ -55,7 +55,9 @@ const html = `<title>unipegPFP Runner — play your Unipeg</title>
   }
   .wrap {
     width: 100%;
-    max-width: 720px;
+    /* Wider than it was (720px) so the board gets the room the owner asked for,
+       matching pages/page.css's move from 880px to 960px. */
+    max-width: 900px;
     padding: 24px 16px 48px;
     display: flex;
     flex-direction: column;
@@ -91,8 +93,19 @@ const html = `<title>unipegPFP Runner — play your Unipeg</title>
   .pieceNum { font-size: 26px; font-weight: 700; }
   .pieceNum span { color: var(--pink); font-size: 0.6em; vertical-align: top; }
 
-  #stage { position: relative; width: 100%; aspect-ratio: 5 / 2; background: var(--card); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
-  #run { width: 100%; height: 100%; display: block; image-rendering: pixelated; }
+  /* Board height is set by the jump arc, exactly as pages/page.css sets it —
+     keep the two in step. The runner is a fixed 84 CSS px tall, the ground sits
+     at 0.86 * H and the apex is 1.33 sprite heights above it, so the sprite's
+     top at apex is 0.86 * H - 195px. The old 5/2 left that 40px from the top
+     edge on a 1280px desktop and 74px ABOVE it on a 390px phone. */
+  #stage {
+    position: relative; width: 100%; aspect-ratio: 2 / 1;
+    min-height: min(340px, calc(100vh - 300px));
+    max-height: calc(100vh - 300px);
+    background: var(--card); border: 1px solid var(--line); border-radius: 12px; overflow: hidden;
+  }
+  /* Absolute so the board's height comes from the bounds above and nothing else. */
+  #run { position: absolute; inset: 0; width: 100%; height: 100%; display: block; image-rendering: pixelated; }
 
   .hud { display: flex; justify-content: space-between; align-items: center; gap: 12px; font-variant-numeric: tabular-nums; }
   .hud .score { font-size: 22px; font-weight: 700; }
@@ -226,8 +239,9 @@ async function play() {
   el("setup").classList.add("hidden");
   const stage = el("stage");
   const canvas = el("run");
-  const rect = stage.getBoundingClientRect();
-  fitCanvas(canvas, rect.width, rect.height);
+  // Content box, not border box — the 1px border would otherwise push a row of
+  // the board out under overflow:hidden, including the top row the arc uses.
+  fitCanvas(canvas, stage.clientWidth, stage.clientHeight);
   el("high").textContent = String(await loadHighScore());
   if (state.game) state.game.stop();
   state.game = startGame({
@@ -261,10 +275,11 @@ el("changeBtn").onclick = () => {
   el("controls").classList.add("hidden");
   el("setup").classList.remove("hidden");
 };
+// Height counts as well as width: the board is bounded by calc(100vh - …).
 window.addEventListener("resize", () => {
   if (!state.game) return;
   const stage = el("stage");
-  fitCanvas(el("run"), stage.getBoundingClientRect().width, stage.getBoundingClientRect().height);
+  fitCanvas(el("run"), stage.clientWidth, stage.clientHeight);
 });
 
 (async () => {

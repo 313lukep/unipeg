@@ -227,8 +227,11 @@ function bootGame() {
   const canvas = el("run");
   if (!lib.game || !stage || !canvas || !state.frames) return;
   stopGame();
-  const rect = stage.getBoundingClientRect();
-  fitCanvas(canvas, rect.width, rect.height);
+  // clientWidth/clientHeight, not getBoundingClientRect: the stage carries a 1px
+  // border, and fitting the canvas to the border box made it overhang the board
+  // by a pixel on each side. Overflow hid it, but the pixel it hid was a row of
+  // the board — including the top row the jump arc is now measured against.
+  fitCanvas(canvas, stage.clientWidth, stage.clientHeight);
   try {
     state.game = lib.game.startGame({
       canvas,
@@ -684,9 +687,18 @@ function wireKeys() {
 function wireResize() {
   let timer = 0;
   let lastWidth = window.innerWidth;
+  let lastHeight = window.innerHeight;
   window.addEventListener("resize", () => {
-    if (Math.abs(window.innerWidth - lastWidth) < 2) return;
+    // Height matters now, not just width: the board's height is bounded by
+    // `calc(100vh - …)`, so a window that only gets shorter still resizes it.
+    if (
+      Math.abs(window.innerWidth - lastWidth) < 2 &&
+      Math.abs(window.innerHeight - lastHeight) < 2
+    ) {
+      return;
+    }
     lastWidth = window.innerWidth;
+    lastHeight = window.innerHeight;
     clearTimeout(timer);
     // Debounced: re-fits the board to the new size, which restarts the run.
     timer = setTimeout(() => {

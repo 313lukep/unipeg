@@ -61,7 +61,10 @@ canvas {
   flex-direction: column;
   justify-content: center;
   gap: var(--gap);
-  max-width: 880px;
+  /* Wider than it was (880px): the board is the thing people came for, and the
+     header and score bar were already comfortable at this measure. --sub is
+     still capped at 50ch, so the copy does not stretch with it. */
+  max-width: 960px;
   margin: 0 auto;
   padding: 32px 24px;
 }
@@ -289,16 +292,51 @@ input[type="number"]::-webkit-inner-spin-button {
 
 /* ── stage ─────────────────────────────────────────────────────────────── */
 
+/* THE BOARD IS SIZED BY THE JUMP, not by taste.
+ *
+ * The runner is a fixed number of CSS pixels tall — 24 cells at an integer
+ * scale, which works out at 84px on every display with a ratio of 1 or 2, and
+ * 56px at 3. It does NOT shrink when the board does. So the board's height is
+ * the only free variable in this sum, taken from lib/game.js's own layout:
+ *
+ *   ground line      0.86 * H          (H - max(2 cells, 14% of H))
+ *   runner standing  84px above it
+ *   jump apex        1.33 * 84 = 111px above that   (v^2/2g, v=6.2H, g=14.5H)
+ *   => sprite top at apex = 0.86 * H - 195px
+ *
+ * H must therefore clear 227px before the unicorn stops leaving the frame at
+ * all, and 275px before there is 15% of board above it. The old
+ * `clamp(168px, 30vh, 248px)` cleared neither: measured in Chromium the apex
+ * sat 18px from the top edge on a 1280px desktop (7.3%) and 74px ABOVE the top
+ * edge on a 390px phone. That is the "jumps out of the panel" the owner saw.
+ *
+ * 340px puts ~29% of the board above the apex; on a wide desktop the 2/1 aspect
+ * takes over at ~456px and gives ~42%. The slack is the point — it is what lets
+ * the jump be retuned without the framing breaking again. */
 .stage {
   position: relative;
   background: var(--card);
   border: 1px solid var(--line);
   border-radius: var(--radius);
   overflow: hidden;
-  height: clamp(168px, 30vh, 248px);
+  aspect-ratio: 2 / 1;
+  /* Never taller than what is left once the header, the score bar and the page
+     padding are paid for: these pages have `overflow: hidden` and must fit.
+     380px is the tallest measured non-board chrome on a wide viewport (the
+     offline header, 371px) plus a little slack. When the viewport is too short
+     to afford 340px, min and max meet and the board takes exactly what is
+     there rather than pushing the footer off the screen. */
+  min-height: min(340px, calc(100vh - 380px));
+  max-height: calc(100vh - 380px);
 }
 
+/* Absolute, so the board's height comes from the aspect ratio and the bounds
+   above and from nothing else. An in-flow canvas at `height: 100%` has to
+   resolve its percentage against a height that is itself content-derived,
+   which is exactly the circularity the sizing above is trying to avoid. */
 .stage canvas {
+  position: absolute;
+  inset: 0;
   width: 100%;
   height: 100%;
   cursor: pointer;
@@ -533,8 +571,15 @@ dialog h2 {
     gap: 18px;
   }
 
+  /* Same 340px floor — the runner is the same 84px tall on a phone as on a
+     desktop, so the arc needs the same room. At this width the 2/1 aspect asks
+     for only ~179px, so the floor is what actually sizes the board and it comes
+     out close to square. That is the honest shape for a fixed-size sprite; the
+     alternative is a unicorn that leaves the frame. Only the reserve changes:
+     the stacked mobile header and footer cost 421px, not 371px. */
   .stage {
-    height: clamp(150px, 26vh, 200px);
+    min-height: min(340px, calc(100vh - 430px));
+    max-height: calc(100vh - 430px);
   }
 
   .setup {
