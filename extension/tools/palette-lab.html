@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>palette lab</title>
+    <style>
+      body { margin: 0; background: #202024; color: #f7f7f8;
+             font: 13px/1.4 ui-monospace, Menlo, monospace; }
+      figure { margin: 0 0 2px; position: relative; }
+      canvas { display: block; image-rendering: pixelated; width: 1100px; height: 400px; }
+      figcaption { position: absolute; left: 14px; top: 12px; z-index: 2;
+                   background: rgba(0,0,0,.55); padding: 6px 12px; border-radius: 999px;
+                   letter-spacing: .12em; text-transform: uppercase; font-weight: 700;
+                   backdrop-filter: blur(4px); }
+      .swatches { position: absolute; right: 14px; top: 12px; z-index: 2; display: flex; gap: 0; }
+      .swatches i { width: 22px; height: 22px; display: block; }
+    </style>
+  </head>
+  <body>
+    <div id="out"></div>
+    <script type="module">
+      import { startScene, DAY } from "../lib/scene.js";
+      import * as upeg from "../lib/upeg.js";
+      import * as sprite from "../lib/sprite.js";
+      import { LANE_SCALES, frameKey } from "../lib/scene.js";
+
+      const IDS = [185206, 28, 36704, 36711, 388199];
+
+      // Candidates share every key with DAY so nothing can fall through to ink.
+      const P = (name, o) => ({ ...DAY, name, ...o });
+
+      const CANDIDATES = [
+        P("1 · moonlit — your palette, literally", {
+          sky: "#0B0B0D", skyHigh: "#16161C", sun: "#F7F7F8", sunCore: "#FFFFFF", cloud: "#2B2B34",
+          hillFar: "#15151B", hillNear: "#1C1C23", grass: "#20202A", grassDark: "#17171F",
+          tuft: "#33333F", flower: "#FF4DA1", flowerAlt: "#F7F7F8",
+          canopyLight: "#31313D", canopyMid: "#25252F", canopyDark: "#1A1A22",
+          trunk: "#0D0D11", bark: "#1B1B23",
+          rock: "#2C2C37", rockDark: "#1E1E27", rockShade: "#131319",
+          water: "#4A4A5E", waterDark: "#2F2F3D", foam: "#F7F7F8", mist: "#3A3A49",
+          ink: "#F7F7F8", paper: "#0B0B0D",
+        }),
+        P("2 · dusk — indigo to ember, one pink", {
+          sky: "#191233", skyHigh: "#241A45", sun: "#FFD9A0", sunCore: "#FFF3DC", cloud: "#3A2B5C",
+          hillFar: "#2A1F44", hillNear: "#241B3A", grass: "#1E1930", grassDark: "#171326",
+          tuft: "#3C3157", flower: "#FF4DA1", flowerAlt: "#FFD9A0",
+          canopyLight: "#3A2E58", canopyMid: "#2C2344", canopyDark: "#1F1932",
+          trunk: "#120E1E", bark: "#241C36",
+          rock: "#332A4A", rockDark: "#241E36", rockShade: "#181327",
+          water: "#4C5E96", waterDark: "#2F3A63", foam: "#CFD8FF", mist: "#3C4570",
+          ink: "#F3EFFF", paper: "#191233",
+        }),
+        P("3 · deep forest — saturated, wide value range", {
+          sky: "#B8D8D0", skyHigh: "#8FBDB6", sun: "#FFF6D6", sunCore: "#FFFFFF", cloud: "#FFFFFF",
+          hillFar: "#2E5B4C", hillNear: "#25503F", grass: "#1F4536", grassDark: "#173628",
+          tuft: "#12291E", flower: "#FF4DA1", flowerAlt: "#FFF6D6",
+          canopyLight: "#3F7A54", canopyMid: "#2A5C3D", canopyDark: "#17392A",
+          trunk: "#241A18", bark: "#3A2A24",
+          rock: "#6E7A72", rockDark: "#4E5A54", rockShade: "#374039",
+          water: "#5FA8C4", waterDark: "#3B7C99", foam: "#E8F7FA", mist: "#A6D2DC",
+          ink: "#0B0B0D", paper: "#E8F7FA",
+        }),
+        P("4 · slate & moss — muted, but with contrast", {
+          sky: "#D6D9DC", skyHigh: "#BCC2C7", sun: "#FFFFFF", sunCore: "#FFFFFF", cloud: "#FFFFFF",
+          hillFar: "#6E7A6B", hillNear: "#5E6B5B", grass: "#556352", grassDark: "#3F4B3E",
+          tuft: "#2E3A2E", flower: "#FF4DA1", flowerAlt: "#FFFFFF",
+          canopyLight: "#78906F", canopyMid: "#5A7254", canopyDark: "#3A4E38",
+          trunk: "#2A2622", bark: "#3E382F",
+          rock: "#9AA0A4", rockDark: "#727A7F", rockShade: "#525A5F",
+          water: "#7FA3B0", waterDark: "#5A7C8A", foam: "#EEF4F6", mist: "#C3D2D7",
+          ink: "#14171A", paper: "#D6D9DC",
+        }),
+      ];
+
+      const byKey = {};
+      for (const id of IDS) {
+        const grid = await upeg.gridFromSeed(await upeg.seedForId(id));
+        for (const s of LANE_SCALES) {
+          const f = sprite.buildRunFrames(grid, { scale: s });
+          byKey[frameKey(id, s)] = { walk: f, duck: f.duck };
+        }
+      }
+
+      const out = document.getElementById("out");
+      for (const pal of CANDIDATES) {
+        const fig = document.createElement("figure");
+        const c = document.createElement("canvas");
+        const cap = document.createElement("figcaption");
+        cap.textContent = pal.name;
+        const sw = document.createElement("div");
+        sw.className = "swatches";
+        for (const k of ["sky", "grass", "canopyMid", "water", "rock", "flower"]) {
+          const i = document.createElement("i");
+          i.style.background = pal[k];
+          sw.append(i);
+        }
+        fig.append(c, cap, sw);
+        out.append(fig);
+        startScene({ canvas: c, ids: IDS, framesByKey: byKey, palette: pal, reducedMotion: true });
+      }
+      document.title = "ready";
+    </script>
+  </body>
+</html>
