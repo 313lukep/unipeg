@@ -28,15 +28,18 @@ const game = strip(readFileSync(`${EXT}/lib/game.js`, "utf8"));
 const html = `<title>unipegPFP Runner — play your Unipeg</title>
 <style>
   :root {
-    /* Committed dark arcade palette — the extension's own screen tokens. */
-    --paper: #0b0b0d;
-    --ink: #f7f7f8;
-    --pink: #ff4da1;
-    --mute: #9c9ca6;
-    --card: #161619;
-    --line: #232326;
+    /* Committed LIGHT palette — docs/DESIGN.md's light column, identical to the
+       extension's pages/page.css. White paper, no theme toggle. --line is a
+       1.26:1 hairline, so it never carries text or a control edge; control
+       borders use --mute (5.69:1 on paper). */
+    --paper: #ffffff;
+    --ink: #0b0b0d;
+    --pink: #d8006e;
+    --mute: #66666e;
+    --card: #f4f3f5;
+    --line: #e7e4e7;
     --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
-    color-scheme: dark;
+    color-scheme: light;
   }
   * { box-sizing: border-box; }
   body {
@@ -49,7 +52,6 @@ const html = `<title>unipegPFP Runner — play your Unipeg</title>
     line-height: 1.5;
     display: flex;
     justify-content: center;
-    -webkit-font-smoothing: antialiased;
   }
   .wrap {
     width: 100%;
@@ -69,16 +71,17 @@ const html = `<title>unipegPFP Runner — play your Unipeg</title>
   label { font-size: 12px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--mute); }
   input[type="number"] {
     font: inherit; font-size: 16px; background: var(--paper); color: var(--ink);
-    border: 2px solid var(--line); border-radius: 8px; padding: 10px 12px; width: 150px;
-    -moz-appearance: textfield;
+    border: 2px solid var(--mute); border-radius: 8px; padding: 10px 12px; width: 150px;
+    caret-color: var(--pink); -moz-appearance: textfield;
   }
   input::-webkit-outer-spin-button, input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
   button {
     font: inherit; font-size: 13px; font-weight: 700; letter-spacing: 0.04em;
-    background: var(--paper); color: var(--ink); border: 2px solid var(--line);
+    background: var(--paper); color: var(--ink); border: 2px solid var(--mute);
     border-radius: 999px; padding: 10px 18px; min-height: 44px; cursor: pointer;
   }
   button.primary { background: var(--ink); color: var(--paper); border-color: var(--ink); }
+  button.primary:hover { background: var(--pink); border-color: var(--pink); }
   button.pink { border-color: var(--pink); color: var(--pink); }
   button:hover { border-color: var(--pink); }
   :focus-visible { outline: 2px solid var(--pink); outline-offset: 2px; }
@@ -97,7 +100,7 @@ const html = `<title>unipegPFP Runner — play your Unipeg</title>
   .hint { color: var(--mute); font-size: 13px; }
   .err { color: var(--pink); font-size: 13px; min-height: 1.2em; }
   .hidden { display: none !important; }
-  kbd { background: var(--paper); border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 5px; padding: 1px 6px; font: inherit; font-size: 12px; color: var(--ink); }
+  kbd { background: var(--paper); border: 1px solid var(--mute); border-bottom-width: 2px; border-radius: 5px; padding: 1px 6px; font: inherit; font-size: 12px; color: var(--ink); }
   footer { color: var(--mute); font-size: 12px; }
   footer a { color: var(--pink); }
   @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
@@ -171,7 +174,8 @@ ${sprite}
 ${game}
 
 // ── page ────────────────────────────────────────────────────────────────
-const PALETTE = { paper: "#0b0b0d", ink: "#f7f7f8", pink: "#ff4da1", mute: "#9c9ca6", card: "#161619", line: "#232326", accent: "#ff4da1" };
+// Same object pages/page.js hands to startGame — light column, keys unchanged.
+const PALETTE = { paper: "#ffffff", ink: "#0b0b0d", pink: "#d8006e", mute: "#66666e", card: "#f4f3f5", line: "#e7e4e7", accent: "#d8006e" };
 const el = (id) => document.getElementById(id);
 const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 const deviceScale = () => Math.max(1, Math.min(3, Math.round(window.devicePixelRatio || 1)));

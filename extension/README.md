@@ -105,6 +105,38 @@ The [optional fetch](#pieces-minted-after-this-build) is a *lookup*, not a rende
 only tell us the seed of a piece minted after this build. Once a seed is known — from the
 bundle or from that one fetch — drawing it never touches the network again.
 
+## The look: light, and committed to it
+
+**The pages are white.** Not "white by default" — there is no theme toggle and no
+`prefers-color-scheme` branch. The new tab, the offline page, the popup and the
+standalone playable build all commit to light the same way an earlier round committed to
+dark, which puts them alongside Chrome's own offline page and the website's light mode.
+
+The tokens are `docs/DESIGN.md`'s **light** column, set once on `:root` in
+`pages/page.css` and mirrored as the `PALETTE` object `pages/page.js` hands to
+`startGame`, so the board paints on the same ground as the page around it:
+
+| token | value | note |
+|---|---|---|
+| `--paper` | `#FFFFFF` | page + board ground |
+| `--ink` | `#0B0B0D` | 19.66:1 on paper |
+| `--pink` | `#D8006E` | 5.07:1 on paper — the light-mode pink. The dark-mode `#FF4DA1` is 3.08:1 on white and is not used here. |
+| `--mute` | `#66666E` | 5.69:1 on paper, 5.14:1 on card |
+| `--card` | `#F4F3F5` | plates, panels, the stage |
+| `--line` | `#E7E4E7` | **1.26:1 — hairline separators only.** Never text, never a control edge. |
+
+Two rules follow from that table and are worth keeping:
+
+- **Control borders are `--mute`, not `--line`.** A `#E7E4E7` pill on white is invisible.
+  Buttons, inputs, the toggle glyph and the settings dialog all take the mute edge; card
+  surfaces take the line hairline, because there a 1.26:1 edge is exactly enough.
+- **Nothing signals state with `opacity`.** A faded pill on white is a grey ghost. The
+  disabled **Lock in** button restyles with real tokens instead.
+
+If you change a colour, change it in `pages/page.css`, in the `PALETTE` object in
+`pages/page.js`, and in `tools/build-playable.mjs` — the standalone page carries its own
+copy of both so it stays a faithful preview of the extension.
+
 ## Install it unpacked
 
 1. Open `chrome://extensions`.

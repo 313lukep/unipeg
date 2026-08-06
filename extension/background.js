@@ -70,23 +70,28 @@ function browserIsOnline() {
   return typeof navigator === "undefined" ? true : navigator.onLine !== false;
 }
 
-/** Per-tab loop guard: never redirect the same tab twice in quick succession. */
-const REDIRECT_COOLDOWN_MS = 4000;
-const lastRedirect = new Map();
+/**
+ * Duplicate-event guard. Chrome can fire onErrorOccurred more than once for a
+ * SINGLE failed navigation, so we swallow a repeat of the same tab+url inside a
+ * short window. It is deliberately NOT a per-tab cooldown: the user retrying,
+ * or clicking another link while still offline, is a NEW failed navigation and
+ * must get the Unipeg page — a blanket cooldown let Chrome's own dino through.
+ */
+const REDIRECT_DEDUPE_MS = 250;
+const lastRedirect = new Map(); // tabId -> { url, at }
 
 function isHttpUrl(url) {
   return typeof url === "string" && (url.startsWith("http://") || url.startsWith("https://"));
 }
 
-/** True if we already sent this tab to the offline page moments ago. */
-function isCoolingDown(tabId, now) {
-  const previous = lastRedirect.get(tabId);
-  return typeof previous === "number" && now - previous < REDIRECT_COOLDOWN_MS;
+/** True only if this is a repeat event for the very same failed navigation. */
+export function isDuplicateEvent(previous, url, now, window = REDIRECT_DEDUPE_MS) {
+  return Boolean(previous) && previous.url === url && now - previous.at < window;
 }
 
 function sweepCooldowns(now) {
-  for (const [tabId, at] of lastRedirect) {
-    if (now - at >= REDIRECT_COOLDOWN_MS) lastRedirect.delete(tabId);
+  for (const [tabId, entry] of lastRedirect) {
+    if (now - entry.at >= REDIRECT_DEDUPE_MS) lastRedirect.delete(tabId);
   }
 }
 
@@ -100,8 +105,8 @@ function onNavigationError(details) {
 
   const now = Date.now();
   sweepCooldowns(now);
-  if (isCoolingDown(details.tabId, now)) return;
-  lastRedirect.set(details.tabId, now);
+  if (isDuplicateEvent(lastRedirect.get(details.tabId), details.url, now)) return;
+  lastRedirect.set(details.tabId, { url: details.url, at: now });
 
   const target = chrome.runtime.getURL(OFFLINE_PAGE) + "?from=" + encodeURIComponent(details.url);
   chrome.tabs.update(details.tabId, { url: target }).catch(() => {

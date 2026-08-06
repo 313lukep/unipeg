@@ -11,7 +11,12 @@
 import { describe, expect, it } from "vitest";
 
 // background.js guards its chrome.* wiring, so importing it here is safe.
-import { shouldRedirect, HARD_OFFLINE_ERRORS, AMBIGUOUS_ERRORS } from "../../background.js";
+import {
+  shouldRedirect,
+  isDuplicateEvent,
+  HARD_OFFLINE_ERRORS,
+  AMBIGUOUS_ERRORS,
+} from "../../background.js";
 
 const ONLINE = true;
 const OFFLINE = false;
@@ -65,5 +70,28 @@ describe("shouldRedirect", () => {
     for (const error of HARD_OFFLINE_ERRORS) {
       expect(AMBIGUOUS_ERRORS.has(error)).toBe(false);
     }
+  });
+});
+
+describe("isDuplicateEvent — retry must never fall through to Chrome's dino", () => {
+  const URL_A = "https://example.com/";
+  const URL_B = "https://other.test/";
+
+  it("swallows a repeat event for the same navigation", () => {
+    expect(isDuplicateEvent({ url: URL_A, at: 1000 }, URL_A, 1100)).toBe(true);
+  });
+
+  it("REDIRECTS a retry of the same url once the dedupe window passes", () => {
+    // Regression: a blanket 4s per-tab cooldown meant clicking Retry showed
+    // Chrome's own error page instead of the Unipeg runner.
+    expect(isDuplicateEvent({ url: URL_A, at: 1000 }, URL_A, 1400)).toBe(false);
+  });
+
+  it("REDIRECTS immediately when the user clicks a link to a different url", () => {
+    expect(isDuplicateEvent({ url: URL_A, at: 1000 }, URL_B, 1050)).toBe(false);
+  });
+
+  it("redirects when the tab has no prior entry", () => {
+    expect(isDuplicateEvent(undefined, URL_A, 1000)).toBe(false);
   });
 });

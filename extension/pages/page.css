@@ -1,17 +1,22 @@
 /* unipegPFP — Offline Unipeg · shared page styles for offline.html + newtab.html.
-   Dark-committed on purpose: both pages stand in for Chrome's own dark, calm
-   error/new-tab surfaces. Tokens mirror docs/DESIGN.md (dark column). */
+   LIGHT-committed on purpose (owner's call): white paper, like Chrome's own
+   offline page and the website's light mode. There is no theme toggle — the
+   pages commit to light the way they previously committed to dark. Tokens are
+   docs/DESIGN.md's light column verbatim; every text pair on them measures
+   >= 4.5:1 (ink 19.66, pink 5.07, mute 5.69 on paper; 17.78 / 4.58 / 5.14 on
+   card). --line is 1.26:1 and therefore never carries text or a control edge:
+   hairline separators only. Control borders use --mute. */
 
 :root {
-  color-scheme: dark;
+  color-scheme: light;
 
-  --paper: #0b0b0d;
-  --ink: #f7f7f8;
-  --pink: #ff4da1;
-  --mute: #9c9ca6;
-  --card: #161619;
-  --line: #232326;
-  --wash: #231219;
+  --paper: #ffffff;
+  --ink: #0b0b0d;
+  --pink: #d8006e;
+  --mute: #66666e;
+  --card: #f4f3f5;
+  --line: #e7e4e7;
+  --wash: #ffecf5;
 
   --mono: "Space Mono", ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas,
     "Liberation Mono", monospace;
@@ -38,7 +43,8 @@ body {
   font-family: var(--sans);
   font-size: 15px;
   line-height: 1.5;
-  -webkit-font-smoothing: antialiased;
+  /* No -webkit-font-smoothing: antialiased. It thins glyphs, which is a gain on
+     a dark screen and a loss on white — grey copy goes ghostly. */
   overflow: hidden;
 }
 
@@ -68,9 +74,12 @@ canvas {
   gap: 28px;
 }
 
+/* On white, a card fill alone is only 1.11:1 against the paper — the plate would
+   float with no edge at all. The hairline is what makes it a plate. */
 .plate {
   flex: none;
   background: var(--card);
+  border: 1px solid var(--line);
   border-radius: var(--radius);
   padding: 12px;
   line-height: 0;
@@ -158,9 +167,11 @@ select {
   color: inherit;
 }
 
+/* Control edges are --mute (5.69:1 on paper, 5.14:1 on card), not --line: a
+   #E7E4E7 pill on white is 1.26:1 and reads as nothing at all. */
 .btn {
   appearance: none;
-  border: 1px solid var(--line);
+  border: 1px solid var(--mute);
   background: transparent;
   color: var(--ink);
   border-radius: 999px;
@@ -174,7 +185,7 @@ select {
 }
 
 .btn:hover {
-  border-color: var(--mute);
+  border-color: var(--ink);
 }
 
 .btn.solid {
@@ -183,8 +194,11 @@ select {
   color: var(--paper);
 }
 
+/* Dark mode lifted the solid pill toward white on hover. On white, the move is
+   into the brand: paper on pink is 5.07:1, so the label stays readable. */
 .btn.solid:hover {
-  background: #fff;
+  background: var(--pink);
+  border-color: var(--pink);
 }
 
 .btn.quiet {
@@ -195,7 +209,7 @@ select {
 
 .btn.quiet:hover {
   color: var(--ink);
-  border-color: var(--line);
+  border-color: var(--mute);
 }
 
 /* Square focus rings even on round pills — a cell-boundary tell. The explicit
@@ -212,8 +226,9 @@ a:focus-visible {
 input[type="number"] {
   appearance: textfield;
   -moz-appearance: textfield;
-  background: var(--card);
-  border: 1px solid var(--line);
+  background: var(--paper);
+  border: 1px solid var(--mute);
+  caret-color: var(--pink);
   border-radius: var(--radius);
   padding: 10px 14px;
   min-height: 44px;
@@ -248,8 +263,8 @@ input[type="number"]::-webkit-inner-spin-button {
   flex: none;
   width: 24px;
   height: 24px;
-  border: 1px solid var(--line);
-  background: var(--card);
+  border: 1px solid var(--mute);
+  background: var(--paper);
   display: grid;
   grid-template: repeat(2, 1fr) / repeat(2, 1fr);
 }
@@ -277,6 +292,7 @@ input[type="number"]::-webkit-inner-spin-button {
 .stage {
   position: relative;
   background: var(--card);
+  border: 1px solid var(--line);
   border-radius: var(--radius);
   overflow: hidden;
   height: clamp(168px, 30vh, 248px);
@@ -337,7 +353,7 @@ input[type="number"]::-webkit-inner-spin-button {
 .foot a {
   color: var(--mute);
   text-decoration: none;
-  border-bottom: 1px solid var(--line);
+  border-bottom: 1px solid var(--mute);
 }
 
 .foot a:hover {
@@ -349,6 +365,7 @@ input[type="number"]::-webkit-inner-spin-button {
 
 .pick {
   background: var(--card);
+  border: 1px solid var(--line);
   border-radius: var(--radius);
   padding: 28px 24px;
 }
@@ -365,8 +382,13 @@ input[type="number"]::-webkit-inner-spin-button {
   margin-top: 20px;
 }
 
+/* Not opacity: a 40%-faded solid pill on white is the exact pale-grey ghost the
+   owner called out. Say "inactive" with real tokens instead — mute on card is
+   5.14:1, so the label stays readable while the pill stops looking pressable. */
 .pickform .btn[disabled] {
-  opacity: 0.4;
+  background: transparent;
+  border-color: var(--line);
+  color: var(--mute);
   cursor: not-allowed;
 }
 
@@ -400,8 +422,10 @@ input[type="number"]::-webkit-inner-spin-button {
   min-width: 0;
 }
 
+/* Real body copy, not a micro-label: ink on card (17.78:1). Grey belongs on the
+   short passive labels below it, not on the paragraph that explains the app. */
 .setupcopy {
-  color: var(--mute);
+  color: var(--ink);
   margin: 0;
   max-width: 52ch;
 }
@@ -437,7 +461,7 @@ input[type="number"]::-webkit-inner-spin-button {
 /* ── settings dialog ───────────────────────────────────────────────────── */
 
 dialog {
-  border: 1px solid var(--line);
+  border: 1px solid var(--mute);
   border-radius: var(--radius);
   background: var(--paper);
   color: var(--ink);
@@ -445,8 +469,9 @@ dialog {
   width: min(420px, calc(100vw - 32px));
 }
 
+/* An ink scrim, not a black one: 60% black over a white page is a blackout. */
 dialog::backdrop {
-  background: rgb(0 0 0 / 0.6);
+  background: rgb(11 11 13 / 0.32);
 }
 
 dialog h2 {

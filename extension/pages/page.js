@@ -31,15 +31,20 @@ const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matc
 
 const el = (id) => document.getElementById(id);
 
-/** Dark-page tokens from docs/DESIGN.md, handed to the game so it stays in palette. */
+/**
+ * Light-page tokens from docs/DESIGN.md (light column), handed to the game so
+ * the board paints on the same white ground as the page around it. These are
+ * the same values page.css sets on :root — keep the two in step. The pink is
+ * the light-mode #D8006E, not the dark-mode #FF4DA1, which fails AA on white.
+ */
 const PALETTE = {
-  paper: "#0B0B0D",
-  ink: "#F7F7F8",
-  pink: "#FF4DA1",
-  mute: "#9C9CA6",
-  card: "#161619",
-  line: "#232326",
-  accent: "#FF4DA1",
+  paper: "#FFFFFF",
+  ink: "#0B0B0D",
+  pink: "#D8006E",
+  mute: "#66666E",
+  card: "#F4F3F5",
+  line: "#E7E4E7",
+  accent: "#D8006E",
 };
 
 const state = {
@@ -192,7 +197,10 @@ function drawGhost(target) {
   if (!target) return;
   const { ctx, cellPx, canvas } = target;
   const rule = deviceScale();
-  ctx.fillStyle = PALETTE.card;
+  // Paper, not card: the plate behind this canvas is already --card, so a card
+  // fill would leave the empty grid with no edge at all on a light page. Paper
+  // makes the 24x24 square read as the sheet the art will land on.
+  ctx.fillStyle = PALETTE.paper;
   ctx.fillRect(0, 0, canvas.width, canvas.height);
   ctx.fillStyle = PALETTE.line;
   for (let i = 4; i < 24; i += 4) {
