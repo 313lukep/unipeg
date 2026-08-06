@@ -51,8 +51,20 @@ export const DEFAULT_SCALE = 4;
  * unicorn that shrinks is not a unicorn that ducks — the owner rejected it.)
  */
 
-/** Whole cells the front end folds down by. The whole crouch is this number. */
-export const DUCK_DROP = 4;
+/**
+ * Whole cells the front end folds down by. The whole crouch is this number.
+ *
+ * FIVE, NOT FOUR — and the reason is the low flyer. The lowest a flyer may ever
+ * be flown is "just clear of the crouched runner", so the crouch's own height is
+ * what decides how close to the ground the low lane can come (game.js
+ * `flyerLanes` clamps the lane to the crouch, whatever the tuning asks for).
+ * At four cells the crouch was 81% of the stand and the low lane could not come
+ * below 0.79 H; at five it is 76% and the lane reaches 0.72 H. Verified against
+ * all 6,913 pieces: every one still folds to exactly `DUCK_DROP` cells shorter
+ * with its feet on the same row, and the shortest crouch in the collection is
+ * still 72% of its stand (at six cells that falls to 67%, which is a squat).
+ */
+export const DUCK_DROP = 5;
 
 /**
  * Whole cells the head juts forward by, on top of the drop — when it can.
@@ -249,19 +261,65 @@ export function safeLean(keyed, box, pivot, lean = DUCK_LEAN) {
  * you. Punching the eye out to transparent would have been invisible instead:
  * the page's own paper is the same near-black.
  *
- * FLAP: wings 6 (raised) alternating with wings 12 (extended), body, horn,
- * tail and legs identical between the two frames. Verified by rendering both
- * frames and looking at them.
+ * FLAP: the same piece rendered with two wing variants, body, horn, tail and
+ * legs identical between the two frames. Verified by rendering both frames and
+ * looking at them.
+ *
+ * LEVELLING THE POSE. Nothing rotates the flyer; the tilt the owner saw was the
+ * piece's own stance. #39 stands like every Unipeg does — forelegs gathered
+ * under the chest, hind legs planted and trailing — and once it is in the air
+ * with nothing to stand on, "front end up, back end down" reads as a horse
+ * rearing rather than a creature flying. The fix is which layers it is built
+ * from, not a transform:
+ *
+ *   - `legsBack` is switched off. The trailing hind legs were the whole of the
+ *     downward slope at the back; without them the belly is a straight line and
+ *     the rump is level with the chest. The gathered forelegs stay, so the
+ *     creature still reads as a horse with its legs tucked up — the pegasus
+ *     pose — rather than as a wing with a head on it.
+ *   - The wing cycle leads with variant 2, the flatter of the owner's two
+ *     swept wings, so the resting frame is the level one.
+ *
+ * Measured on the mirrored silhouette (regression of each column's centre of
+ * mass against x, i.e. how far the shape falls from nose to tail):
+ *
+ *   full piece, wings 1 / 2      slope 0.319 / 0.297   nose-to-tail drop 4.7 / 4.3 cells
+ *   legsBack off, wings 2 / 1    slope 0.196 / 0.219   nose-to-tail drop 2.5 / 2.9 cells
+ *
+ * Rejected after rendering them: dropping BOTH leg layers (a flat-bottomed
+ * slab; the metric gets worse, 0.414, because the tail is then the only thing
+ * below the belly), dropping only `legsFront` (worse still, 0.515 — the hind
+ * legs alone read as a dive), and dropping the tail as well (a rectangle with
+ * a horn). None of the other 14 hind-leg variants tuck; they all plant.
  */
 export const FLYER_PIECE_ID = 39;
 export const FLYER_SEED = 1927359419702180163628542380460131660334337n;
 // Owner's pick: the broad, sharp swept wing. Variants 1 and 2 are the same
 // large triangular wing with a hard leading edge (pterodactyl-like); the tip
 // position differs just enough between them to read as one wing beating
-// rather than two different creatures.
-export const FLYER_WING_CYCLE = [1, 2];
+// rather than two different creatures. Variant 2 leads because it sits flatter.
+export const FLYER_WING_CYCLE = [2, 1];
+/**
+ * Layers overridden on the flyer, on top of the piece's own traits.
+ * `ground` because a creature in flight carries no ground strip; `legsBack`
+ * because trailing hind legs are what made it read as a rearing horse.
+ */
+export const FLYER_LAYERS = { ground: 0, legsBack: 0 };
 export const FLYER_INK = "#0b0b0d";
-export const FLYER_EYE = "#f7f7f8";
+/**
+ * The eye. Red, at the owner's request — and one specific red, because it is
+ * the only cell of the flyer that is not the silhouette and it has two very
+ * different neighbours: the near-black body it sits inside, and the near-white
+ * board that shows through around the creature.
+ *
+ *   #e5484d  vs FLYER_INK #0b0b0d  5.02:1     vs a white board  3.91:1
+ *   #d92b2b  vs FLYER_INK          4.06:1     vs white          4.85:1
+ *   #ff4d4d  vs FLYER_INK          6.01:1     vs white          3.27:1
+ *
+ * #e5484d is the one that clears 3.5:1 in BOTH directions — a darker red
+ * disappears into the head, a brighter one washes out against the board.
+ */
+export const FLYER_EYE = "#e5484d";
 /** Flyer scale relative to the runner's. Integer at both page scales (4, 8). */
 export const FLYER_RATIO = 3 / 4;
 
@@ -284,8 +342,7 @@ export function buildFlyerGrids() {
   const meta = decodeSeed(FLYER_SEED);
   const base = {
     ...meta,
-    // A creature in flight carries no ground strip.
-    ground: 0,
+    ...FLYER_LAYERS,
     bodyColor: SENTINEL_INK,
     hairColor: SENTINEL_INK,
     hornColor: SENTINEL_INK,

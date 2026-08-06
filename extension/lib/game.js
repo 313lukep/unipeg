@@ -19,10 +19,25 @@
  * Tuning. Distances are in *sprite heights* (H) so the game feels identical at
  * any zoom or DPI; startGame multiplies them by the real sprite height once.
  *
- * The jump is deliberately floaty rather than tall: apex v^2/2g = 1.33 H, hang
- * time 2v/g = 0.86 s. The apex is what has to fit inside a short board, and the
- * hang time is what carries the runner over a three-wide cluster — so the arc
- * is tuned by moving BOTH numbers, never just the velocity.
+ * THE JUMP ARC — apex v^2/2g = 1.32 H, hang time 2v/g = 0.78 s, and the rise
+ * takes 0.39 s of that. The apex is what has to fit inside a short board and
+ * under the low flyer lane; the hang time is what carries the runner over a
+ * three-wide cluster — so the arc is tuned by moving BOTH numbers, never just
+ * the velocity.
+ *
+ * The owner asked for a quicker jump, so gravity went up 19% (14.5 -> 17.2) and
+ * the takeoff velocity 9% (6.2 -> 6.75): the same apex, reached and left 8%
+ * sooner. The apex is deliberately NOT raised with it, because two other things
+ * are measured against it — a taller jump pushes the low flyer lane up off the
+ * ground (see `flyerLanes`), and it needs headroom on a short board. 1.33 H is
+ * the ceiling at which the low lane still sits on the crouch rather than on the
+ * arc, for every piece in the collection.
+ *
+ * A shorter hang covers less ground while airborne, so `clearMargin` came down
+ * with it (1.25 -> 1.15). That is a re-normalisation, not a difficulty change:
+ * measured across every pattern, every geometry and every speed, the speed at
+ * which each pattern becomes clearable moved by at most 0.15 H/s, so the board
+ * still opens with the same singles and closes with the same walls.
  *
  * THE RAMP — why it opens this slowly.
  *
@@ -43,30 +58,31 @@
  * re-checked against the real jump arc before anything is allowed to spawn.
  */
 export const DEFAULTS = {
-  gravity: 14.5, // H per second squared
-  jumpVelocity: 6.2, // H per second, upward — apex ~1.33 H, hang ~0.86 s
+  gravity: 17.2, // H per second squared
+  jumpVelocity: 6.75, // H per second, upward — apex ~1.32 H, hang ~0.78 s, rise ~0.39 s
   baseSpeed: 2.8, // H per second — a calm walk-on, see THE RAMP above
   maxSpeed: 10, // H per second — reached at t = 72 s, not before
   accel: 0.1, // H per second, per second of survival
   hitboxShrink: 0.15, // forgiving: 15% off the runner's box
-  clearMargin: 1.25, // a group must fit the jump arc with 25% to spare
+  clearMargin: 1.15, // a group must fit the jump arc with 15% to spare
   scoreUnit: 0.5, // H of travel per point
   frameHz: 11, // run-cycle frames per second at base speed
   gapMin: 1.6, // seconds between obstacles, at the current speed
   gapMax: 2.8,
   gapFloor: 1.25, // never closer than this, however fast it gets
   coyoteTime: 0.08, // seconds of grace after leaving the ground
-  duckDrop: 4, // cells the crouch folds down by (sprite.js DUCK_DROP)
+  duckDrop: 5, // cells the crouch folds down by (sprite.js DUCK_DROP)
   duckGravity: 3.5, // gravity multiplier while ducking in mid-air (fast fall)
-  flyerScore: 450, // no flyers before this score — Chrome's dino uses 450 too
+  flyerScore: 350, // no flyers before this score — the owner's number
   flyerChance: 0.32, // share of spawns that fly, once they are unlocked
   flyerSpeedMult: 1.05, // flyers close slightly faster than the ground scrolls
   flyerHz: 4, // wingbeats per second — deliberately slower than the gallop
-  laneLow: 0.66, // H above the ground: must be ducked — sits low, skimming the head
+  laneLow: 0.62, // H above the ground: must be ducked — see THE LOW LANE below
   laneMid: 0.36, // must be jumped
   laneHigh: 1.1, // clears a standing runner — visibly, not by a hair
-  laneMargin: 0.04, // H of slack held on every lane boundary
+  laneMargin: 0.02, // H of slack held on every lane boundary
   facetContrast: 2, // minimum contrast an obstacle holds against the board
+  muted: false, // the jump blip — off by default, the page owns the toggle
 };
 
 export const HIGH_SCORE_KEY = "upegpfp.highScore";
@@ -236,6 +252,22 @@ const clamp = (v, lo, hi) => Math.min(Math.max(v, lo), hi);
  * the flyer art were ever too short for the low lane to be unjumpable, the
  * clamp keeps "a standing runner is hit" and gives up the other half — which
  * the unit tests would catch immediately.
+ *
+ * THE LOW LANE, AND WHY `laneLow` IS NOT ITS HEIGHT.
+ *
+ * `cfg.laneLow` asks for a height; the clamp almost always overrules it. The
+ * low lane's floor is the crouch — the flyer's belly has to pass over the
+ * ducking runner's back — so the number that actually places it is
+ * `duckTop + margin`, and `laneLow` is only a request to be as low as that
+ * allows. Lowering `laneLow` on its own moves nothing at all.
+ *
+ * The owner asked for a lower low flyer, so the two things that DO move it were
+ * moved: the crouch went a cell deeper (sprite.js DUCK_DROP, 4 -> 5) and the
+ * slack on the boundary was halved (`laneMargin`, 0.04 -> 0.02 H). At the two
+ * scales that ship, the flyer's belly went from 0.789 H above the ground to
+ * 0.725 H — 8% closer, and about a fifth of the way from the runner's shoulder
+ * to its knee. It cannot go lower than ~0.72 H without a crouch so deep the
+ * unicorn stops reading as a unicorn.
  */
 export function flyerLanes(spriteH, duckH, flyerH, cfg = DEFAULTS) {
   const shrink = cfg.hitboxShrink / 2;
@@ -258,7 +290,12 @@ export function pickLane(rand) {
   return FLYER_LANES[Math.min(Math.max(i, 0), FLYER_LANES.length - 1)];
 }
 
-/** Flyers are held back until the run has earned them, exactly like the dino. */
+/**
+ * Flyers are held back until the run has earned them, exactly like the dino —
+ * at 350 points rather than the dino's 450, because the owner wanted to meet
+ * the thing in the sky sooner. At the base speed that is roughly 60 seconds of
+ * survival; by then the ramp has opened the board out to about 4 H/s.
+ */
 export function mayFly(score, cfg = DEFAULTS) {
   return score >= cfg.flyerScore;
 }
@@ -851,6 +888,124 @@ function prefersReducedMotion() {
 const JUMP_CODES = new Set(["Space", "ArrowUp", "Enter", " ", "Up"]);
 const DUCK_CODES = new Set(["ArrowDown", "Down"]);
 
+/* ------------------------------------------------------------ the jump blip */
+
+/**
+ * THE BLIP — synthesised, never a file.
+ *
+ * The extension ships no audio asset and does not touch the network, so the
+ * jump sound is one WebAudio oscillator: a square wave, `BLIP_SECONDS` long,
+ * through a gain envelope. The envelope is the whole trick — a square wave
+ * switched on and off at full amplitude is a click at each end, so the gain
+ * ramps up over `BLIP_ATTACK` and back down to (near) zero before the
+ * oscillator stops. `exponentialRampToValueAtTime` cannot reach 0, hence the
+ * tiny floor followed by a hard zero at the very end.
+ *
+ * It is quiet on purpose: peak gain 0.05 is a tick under the run, not a beep at
+ * you. Nothing here may ever throw — a browser with audio disabled, a locked
+ * AudioContext, a page that was never gestured at, an OfflineAudioContext with
+ * a different API surface: all of them must leave the game running.
+ */
+export const BLIP_HZ = 720;
+export const BLIP_SECONDS = 0.06;
+export const BLIP_ATTACK = 0.004;
+export const BLIP_GAIN = 0.05;
+
+/** The AudioContext constructor this browser has, or null. Never throws. */
+function audioConstructor() {
+  try {
+    return globalThis.AudioContext || globalThis.webkitAudioContext || null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Play one blip through `audio`, an AudioContext. Returns true if a note was
+ * actually scheduled — the tests read that rather than listening.
+ */
+export function playBlip(audio, opts = {}) {
+  if (!audio || typeof audio.createOscillator !== "function" || typeof audio.createGain !== "function") {
+    return false;
+  }
+  try {
+    const t0 = Number.isFinite(audio.currentTime) ? audio.currentTime : 0;
+    const secs = opts.seconds ?? BLIP_SECONDS;
+    const peak = opts.gain ?? BLIP_GAIN;
+    const osc = audio.createOscillator();
+    const gain = audio.createGain();
+    osc.type = "square";
+    osc.frequency.setValueAtTime(opts.hz ?? BLIP_HZ, t0);
+    gain.gain.setValueAtTime(0.0001, t0);
+    gain.gain.linearRampToValueAtTime(peak, t0 + (opts.attack ?? BLIP_ATTACK));
+    gain.gain.exponentialRampToValueAtTime(0.0001, t0 + secs);
+    gain.gain.setValueAtTime(0, t0 + secs);
+    osc.connect(gain);
+    gain.connect(audio.destination);
+    osc.start(t0);
+    osc.stop(t0 + secs);
+    osc.onended = () => {
+      try {
+        osc.disconnect();
+        gain.disconnect();
+      } catch {
+        /* already torn down */
+      }
+    };
+    return true;
+  } catch {
+    // Audio is a garnish. If the browser will not play it, the game does not
+    // care, and the player never finds out.
+    return false;
+  }
+}
+
+/* --------------------------------------------------------------- the banner */
+
+/**
+ * The overlay copy, as plain lines.
+ *
+ * ASCII ONLY, and that is a rule rather than a preference. The old ready banner
+ * was "SPACE OR TAP TO RUN · ↓ TO DUCK": the arrow and the interpunct are not in
+ * every monospace font a browser might fall back to, so they rendered as tofu
+ * boxes on some machines and — worse — changed the measured width of the whole
+ * string, which is what centred it. Words instead of glyphs, and the banner
+ * looks the same everywhere.
+ *
+ * Returns [] for the running state, which is what keeps the banner from
+ * lingering: there is no text to draw while the run is live.
+ */
+export function bannerLines(state, score = 0, high = 0) {
+  if (state === "over") {
+    return ["CRASHED - PRESS SPACE TO RUN AGAIN", `SCORE ${score}   BEST ${Math.max(high, score)}`];
+  }
+  if (state === "ready") {
+    return ["PRESS SPACE OR TAP TO RUN", "SPACE JUMPS - DOWN ARROW DUCKS"];
+  }
+  return [];
+}
+
+/**
+ * Where the banner's first baseline goes, in device px from the top.
+ *
+ * The banner wants to sit `1.6` sprite-heights above the ground line, well
+ * clear of the runner's head. On a short board that lands off the top of the
+ * canvas — a 240 px board with a 168 px runner puts it at y = -62 — so the
+ * preference is clamped between a top padding and the highest point that still
+ * leaves the whole block above the runner's shoulder. Pure, so the placement is
+ * testable without a canvas.
+ */
+export function bannerPlacement({ lines, size, lead, groundY, spriteH, height }) {
+  const n = Math.max(1, lines);
+  const block = size + lead * (n - 1);
+  const ceiling = Math.round(size * 0.9);
+  // Below this the text would be drawn over the runner itself.
+  const shoulder = Math.round(groundY - spriteH * 0.35);
+  const lowest = Math.max(ceiling, Math.min(shoulder, Math.round(height)) - block);
+  const want = Math.round(groundY - spriteH * 1.6);
+  return Math.min(Math.max(want, ceiling), lowest);
+}
+
 /**
  * Boot the runner on `canvas`.
  *
@@ -865,6 +1020,9 @@ const DUCK_CODES = new Set(["ArrowDown", "Down"]);
  * @param {number} [opts.scale]              device-pixel ratio the page sized
  *   the canvas and the sprite frames at; keeps the blit exactly 1:1
  * @param {boolean} [opts.reducedMotion]     overrides the media query
+ * @param {boolean} [opts.muted]             silences the jump blip. Default
+ *   false (audible). The handle's `setMuted` flips it later; this module never
+ *   draws a control for it — the page owns that.
  */
 export function startGame({
   canvas,
@@ -876,6 +1034,7 @@ export function startGame({
   config,
   scale,
   reducedMotion,
+  muted: mutedOpt,
 } = {}) {
   if (!canvas) throw new Error("startGame needs a canvas");
   const cfg = { ...DEFAULTS, ...(config || {}) };
@@ -942,6 +1101,9 @@ export function startGame({
   let rafId = 0;
   let last = 0;
   let stopped = false;
+  // Audio is built lazily, on the first jump — see `blip`.
+  let audio = null;
+  let muted = typeof mutedOpt === "boolean" ? mutedOpt : Boolean(cfg.muted);
 
   let highLoaded = false;
   loadHighScore().then((v) => {
@@ -993,9 +1155,16 @@ export function startGame({
     return out;
   }
 
-  function reset() {
-    state = "ready";
+  /**
+   * Rewind to `next`. The state is a parameter rather than always "ready"
+   * because `begin` used to reset to "ready" and then immediately set
+   * "running", which published a spurious ready frame to `onScore` — a page
+   * that swaps its overlay on that callback flickered once on every restart.
+   */
+  function reset(next = "ready") {
+    state = next;
     runner = { y: 0, vy: 0, grounded: true, airTime: 0, jumped: false };
+    ducking = false;
     obstacles = [];
     elapsed = 0;
     distance = 0;
@@ -1011,16 +1180,46 @@ export function startGame({
   }
 
   function begin() {
-    reset();
-    state = "running";
-    emit();
+    reset("running");
+  }
+
+  /**
+   * The blip, on the jumps that actually happen.
+   *
+   * The AudioContext is built on the FIRST jump and never before: that press is
+   * a user gesture, which is exactly what the autoplay policy wants to see, and
+   * a game nobody plays never constructs one. Everything is wrapped — a browser
+   * with no AudioContext, a context the page is not allowed to resume, a
+   * `resume()` that rejects: all of them fall through silently.
+   */
+  function blip() {
+    if (muted) return false;
+    try {
+      if (!audio) {
+        const Ctx = audioConstructor();
+        if (!Ctx) return false;
+        audio = new Ctx();
+      }
+      if (audio.state === "suspended" && typeof audio.resume === "function") {
+        const resumed = audio.resume();
+        if (resumed && typeof resumed.catch === "function") resumed.catch(() => {});
+      }
+      return playBlip(audio);
+    } catch {
+      return false;
+    }
   }
 
   function press() {
     if (stopped) return;
     if (state === "ready") return begin();
     if (state === "over") return begin();
-    runner = jump(runner, jumpV, cfg.coyoteTime);
+    const next = jump(runner, jumpV, cfg.coyoteTime);
+    // `jump` returns the SAME object when the runner may not jump, so identity
+    // is the test for "a jump really happened" — no beep on a mashed key.
+    if (next === runner) return;
+    runner = next;
+    blip();
   }
 
   function setDuck(down) {
@@ -1211,8 +1410,9 @@ export function startGame({
 
     drawRunner();
 
-    if (state === "over") drawBanner("CRASHED — PRESS SPACE TO RUN AGAIN");
-    else if (state === "ready") drawBanner("SPACE OR TAP TO RUN · ↓ TO DUCK");
+    // One source of truth for the overlay: `bannerLines` returns [] while the
+    // run is live, so there is no state in which stale copy can survive.
+    drawBanner(bannerLines(state, score, high));
   }
 
   /** One Ethereum mark, in the piece's own colours. */
@@ -1235,9 +1435,10 @@ export function startGame({
       ctx.drawImage(flyer[Math.min(flapIndex, flyer.length - 1)], x, Math.round(o.y));
       return;
     }
-    // Black, on any board — the same near-black sprite.js paints the real
-    // silhouette with, so the stand-in reads as the same creature.
-    ctx.fillStyle = SHADOW;
+    // The same near-black sprite.js paints the real silhouette with, so the
+    // stand-in reads as the same creature — but run through `readable`, because
+    // a near-black rectangle on a near-black board is an invisible obstacle.
+    ctx.fillStyle = readable(SHADOW, theme.board, 3);
     ctx.fillRect(x, Math.round(o.y), o.w, o.h);
   }
 
@@ -1266,23 +1467,33 @@ export function startGame({
     ctx.drawImage(frame, x, y);
   }
 
-  function drawBanner(text) {
+  const FONT_STACK = `"Space Mono", ui-monospace, SFMono-Regular, Menlo, monospace`;
+
+  /**
+   * The overlay. First line is the headline, the rest are quieter sub-lines.
+   *
+   * Both colours come from the palette the page handed over and are pushed
+   * through `readable` against the board first, so the copy holds text-grade
+   * contrast on a white board and on a near-black one alike.
+   */
+  function drawBanner(lines) {
+    if (!lines.length) return;
     const size = Math.max(11, Math.round(cellPx * 2.4));
-    ctx.font = `700 ${size}px "Space Mono", ui-monospace, SFMono-Regular, Menlo, monospace`;
+    const small = Math.max(10, Math.round(size * 0.8));
+    const lead = Math.round(size * 1.6);
+    const top = bannerPlacement({ lines: lines.length, size, lead, groundY, spriteH, height });
+    const mid = Math.round(width / 2);
     ctx.textAlign = "center";
-    ctx.textBaseline = "middle";
-    // The overlay is the one thing a player reads rather than dodges: hold it
-    // to text contrast against the board, not decoration contrast.
+    // "top" rather than "middle": the placement maths above is in baselines, and
+    // a middle baseline would drift with whatever font actually loaded.
+    ctx.textBaseline = "top";
+    ctx.font = `700 ${size}px ${FONT_STACK}`;
     ctx.fillStyle = state === "over" ? readable(theme.accent, theme.board, 4.5) : theme.ink;
-    ctx.fillText(text, Math.round(width / 2), Math.round(groundY - spriteH * 1.6));
-    if (state === "over") {
-      ctx.fillStyle = theme.ink;
-      ctx.font = `400 ${Math.max(10, Math.round(size * 0.8))}px "Space Mono", ui-monospace, monospace`;
-      ctx.fillText(
-        `SCORE ${score} · BEST ${Math.max(high, score)}`,
-        Math.round(width / 2),
-        Math.round(groundY - spriteH * 1.6 + size * 1.6),
-      );
+    ctx.fillText(lines[0], mid, top);
+    ctx.font = `400 ${small}px ${FONT_STACK}`;
+    ctx.fillStyle = readable(theme.mute, theme.board, 4.5);
+    for (let i = 1; i < lines.length; i++) {
+      ctx.fillText(lines[i], mid, top + lead * i);
     }
   }
 
@@ -1398,9 +1609,26 @@ export function startGame({
       canvas.removeEventListener("pointerdown", onPointerDown);
       if (resizeObserver) resizeObserver.disconnect();
       else removeEventListener("resize", onResize);
+      try {
+        if (audio && typeof audio.close === "function") audio.close();
+      } catch {
+        /* already closed, or never really opened */
+      }
+      audio = null;
     },
     restart() {
       begin();
+    },
+    /**
+     * Silence (or unsilence) the jump blip. The page is expected to own the
+     * control; this module never draws one. Returns the new value.
+     */
+    setMuted(on) {
+      muted = Boolean(on);
+      return muted;
+    },
+    isMuted() {
+      return muted;
     },
     getScore() {
       return score;
@@ -1425,6 +1653,8 @@ export function startGame({
         lanes: { ...lanes },
         pattern: lastPattern,
         board: theme.board,
+        banner: bannerLines(state, score, high),
+        muted,
         ducking,
         runner: { ...runner },
         runnerRect: runnerRect(),
