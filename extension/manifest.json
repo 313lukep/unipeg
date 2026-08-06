@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "unipegPFP — Offline Unipeg",
+  "name": "upegRUN",
   "version": "1.0.0",
-  "description": "Your Unipeg takes over the new tab, and shows up with a runner game whenever the internet drops. Renders on-chain art fully offline.",
+  "description": "Your Unipeg takes over the new tab and runs whenever the internet drops. On-chain art, rendered fully offline.",
   "icons": {
     "16": "icons/icon16.png",
     "48": "icons/icon48.png",
