@@ -96,14 +96,22 @@ const html = `<title>upegRUN Runner — play your Unipeg</title>
      running past the Ethereum marks.
      Plain GET form, no autofocus, so the first space bar still jumps. It opens
      in a new tab here so this preview page survives the click. */
-  .ntbar { display: flex; align-items: center; gap: 20px; }
-  .ntbody { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 10px; }
-  .ntsub { margin: 0; color: var(--mute); font-size: 13px; }
+  /* Three columns: plate, search, and an empty third exactly as wide as the
+     plate, so the middle track's centre lands on the page's centre and the bar
+     takes every pixel the two leave. The outer tracks are a fixed width, not
+     1fr — an fr track whose min-content exceeds its share freezes there while
+     the empty one collapses, which pushed the bar 61px right of centre. Same
+     reasoning and the same structure as pages/page.css.
+     Plate here: 96px canvas + 10px padding each side + 1px border each side. */
+  .ntbar { --plate-w: 118px; display: grid; grid-template-columns: var(--plate-w) minmax(0, 1fr) var(--plate-w); align-items: center; gap: 20px; }
+  @media (max-width: 860px) { .ntbar { grid-template-columns: auto minmax(0, 1fr); } }
+  .ntbody { min-width: 0; display: flex; flex-direction: column; gap: 10px; }
+  .ntsub { margin: 0; color: var(--mute); font-size: 13px; text-align: center; }
   .ntsub b { color: var(--ink); }
   .ntsub .hash { color: var(--pink); }
   #ntPortrait { image-rendering: pixelated; border-radius: 8px; background: var(--paper); }
   .plate { flex: none; background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 10px; line-height: 0; }
-  .search { display: flex; align-items: center; gap: 10px; }
+  .search { display: flex; align-items: center; gap: 10px; width: 100%; }
   .search input[type="search"] {
     flex: 1; min-width: 0; font: inherit; font-size: 16px;
     background: var(--paper); color: var(--ink); caret-color: var(--pink);
@@ -133,6 +141,7 @@ const html = `<title>upegRUN Runner — play your Unipeg</title>
   .hud .score { font-size: 22px; font-weight: 700; }
   .hud .hi { color: var(--mute); font-size: 13px; }
   .hint { color: var(--mute); font-size: 13px; }
+  .controls { text-align: center; margin: 0; }
   .err { color: var(--pink); font-size: 13px; min-height: 1.2em; }
   .hidden { display: none !important; }
   kbd { background: var(--paper); border: 1px solid var(--mute); border-bottom-width: 2px; border-radius: 5px; padding: 1px 6px; font: inherit; font-size: 12px; color: var(--ink); }
@@ -185,9 +194,11 @@ const html = `<title>upegRUN Runner — play your Unipeg</title>
     <button id="changeBtn">CHANGE PEG</button>
   </div>
 
-  <p class="hint hidden" id="controls">
-    <kbd>Space</kbd> or <kbd>↑</kbd> jump · <kbd>↓</kbd> duck · dodge the Ethereum marks,
-    duck the black winged unipeg.
+  <!-- Under the board, same as pages/newtab.html: in the board they were a
+       second banner line that vanished the moment you started. -->
+  <p class="hint controls hidden" id="controls">
+    <kbd>Space</kbd> or <kbd>↑</kbd> to jump · <kbd>↓</kbd> to duck · dodge the Ethereum marks,
+    duck the black winged unipeg
   </p>
 
   <footer>

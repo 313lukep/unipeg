@@ -7,7 +7,6 @@ import {
   BLIP_HZ,
   BLIP_SECONDS,
   DEFAULTS,
-  ETH_BLUE,
   ETH_GREY,
   ETH_LARGE,
   ETH_SMALL,
@@ -468,33 +467,27 @@ describe("game.js — obstacles are Ethereum marks", () => {
     expect(clusterShape(ETH_SMALL, 1)).toBe(ETH_SMALL);
   });
 
-  it("paints both faces the one grey, and only the seam blue", () => {
-    expect(ethFacets()).toEqual({ L: ETH_GREY, M: ETH_BLUE, D: ETH_GREY });
+  it("paints every facet the one grey — no second colour anywhere", () => {
+    expect(ethFacets()).toEqual({ L: ETH_GREY, M: ETH_GREY, D: ETH_GREY });
     expect(ETH_GREY).toBe("#3C3C3D");
-    expect(ETH_BLUE).toBe("#627EEA");
+    expect(new Set(Object.values(ethFacets())).size).toBe(1);
   });
 
-  it("keeps the blue a hairline — one cell wide, a small share of the mark", () => {
+  it("is one flat silhouette per mark, notch included", () => {
+    const facets = ethFacets();
     for (const [name, shape] of [
       ["small", ETH_SMALL],
       ["large", ETH_LARGE],
       ["tall", ETH_TALL],
     ] as const) {
-      // The seam is never a run: every blue span in `paint` is exactly one cell.
-      const seams = shape.paint.filter((r) => r.facet === "M");
-      for (const r of seams) expect([name, r.w]).toEqual([name, 1]);
-      // And at most one seam cell per row, so it reads as a line, not a band.
-      for (const row of shape.rows) {
-        expect([name, row.split("").filter((c) => c === "M").length]).toEqual([
-          name,
-          row.includes("M") ? 1 : 0,
-        ]);
-      }
-      // Grey outnumbers blue at least 3 to 1 in every mark: the 7-cell-wide
-      // small one is the tightest at 32:10, the large one runs 94:17.
-      const filled = shape.rows.join("").split("").filter((c) => c !== ".").length;
-      const grey = filled - seams.length;
-      expect([name, grey >= seams.length * 3]).toEqual([name, true]);
+      // Every painted run resolves to the same colour, whatever letter it wears.
+      const colours = new Set(shape.paint.map((r) => facets[r.facet as "L" | "M" | "D"]));
+      expect([name, [...colours]]).toEqual([name, [ETH_GREY]]);
+      // The chevron notch is CUT, not painted, so flattening cannot fill it in:
+      // every mark keeps at least one row whose middle cells are empty (the
+      // small and tall marks have one such row, the large one has two).
+      const notched = shape.rows.filter((row) => /[A-Z]\.+[A-Z]/.test(row));
+      expect([name, notched.length >= 1]).toEqual([name, true]);
     }
   });
 
@@ -566,19 +559,22 @@ describe("game.js — nothing vanishes into the board", () => {
     expect(readable(undefined as unknown as string, NEAR_BLACK)).toBe("#ffffff");
   });
 
-  it("keeps a mark's grey and its seam visible on any board", () => {
+  it("keeps the mark's grey visible on any board, including its own colour", () => {
     for (const board of [WHITE, NEAR_BLACK, "#161619", "#cbbba0", ETH_GREY]) {
       const facets = readableFacets(ethFacets(), board, 2);
       for (const c of [facets.L, facets.M, facets.D]) {
         expect([board, c, contrastRatio(c, board) >= 2]).toEqual([board, c, true]);
       }
+      // Flat in, flat out — the contrast pass must never split one colour into
+      // three by rounding the three identical inputs differently.
+      expect([board, new Set([facets.L, facets.M, facets.D]).size]).toEqual([board, 1]);
     }
   });
 
-  it("leaves the Ethereum colours untouched on the white board the pages ship", () => {
+  it("leaves the Ethereum grey untouched on the white board the pages ship", () => {
     expect(readableFacets(ethFacets(), WHITE, 2)).toEqual({
       L: ETH_GREY,
-      M: ETH_BLUE,
+      M: ETH_GREY,
       D: ETH_GREY,
     });
   });
@@ -1091,9 +1087,10 @@ describe("game.js — the banner", () => {
     }
     expect(bannerLines("running")).toEqual([]);
     expect(bannerLines("running", 999, 999)).toEqual([]);
-    expect(bannerLines("ready")).toHaveLength(2);
-    expect(bannerLines("ready")[0]).toMatch(/SPACE/);
-    expect(bannerLines("ready")[1]).toMatch(/DOWN ARROW/); // the arrow, spelled out
+    // ONE line on ready. The controls are page copy under the board now, where
+    // they survive the run starting; the banner is only the call to action.
+    expect(bannerLines("ready")).toEqual(["PRESS SPACE OR TAP TO RUN"]);
+    expect(bannerLines("ready").join(" ")).not.toMatch(/DUCK/);
   });
 
   it("reports the score on a crash, and never a best worse than the score", () => {
@@ -1592,8 +1589,7 @@ describe("game.js — startGame shell", () => {
       piece: ["#ac3232"],
     });
     const marks = readableFacets(ethFacets(), board, DEFAULTS.facetContrast);
-    expect(seen.has(marks.L)).toBe(true); // grey faces
-    expect(seen.has(marks.M)).toBe(true); // blue seam
+    expect(seen.has(marks.L)).toBe(true); // the one grey the marks wear
     expect(seen.has("#ac3232")).toBe(false); // the piece's colour never lands on a mark
     expect(seen.has("#9c9ca6")).toBe(true); // ground line uses the page's mute
     expect(seen.has("#161619")).toBe(true); // and the board is the page's card
@@ -1623,11 +1619,10 @@ describe("game.js — startGame shell", () => {
       expect([colour, contrastRatio(colour, "#ffffff") >= DEFAULTS.facetContrast]).toEqual([colour, true]);
     }
     // ...and no pale piece colour was drafted onto a mark in the first place:
-    // the marks are Ethereum's grey and blue, both already legible on white, so
-    // the contrast pass has nothing to spend.
+    // the marks are one Ethereum grey, already legible on white, so the
+    // contrast pass has nothing to spend.
     expect(seen.has("#fcf893")).toBe(false);
     expect(seen.has(ETH_GREY)).toBe(true);
-    expect(seen.has(ETH_BLUE)).toBe(true);
   });
 
   it("keeps the dark board exactly as it was", () => {
@@ -1649,7 +1644,8 @@ describe("game.js — startGame shell", () => {
     expect(marks.L).not.toBe(ETH_GREY);
     expect(contrastRatio(marks.L, board)).toBeGreaterThanOrEqual(DEFAULTS.facetContrast);
     expect(seen.has(marks.L)).toBe(true);
-    expect(marks.M).toBe(ETH_BLUE); // the blue already clears it
+    // Lifted, still flat: one colour in, one colour out.
+    expect(new Set([marks.L, marks.M, marks.D]).size).toBe(1);
   });
 
   it("is losable: a player who never jumps crashes into the first mark", async () => {

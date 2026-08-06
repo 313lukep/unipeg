@@ -41,12 +41,9 @@
             />
             <button type="submit" class="btn solid" id="searchBtn">Search</button>
           </form>
-          <p class="sub">
-            <span class="mono">Click the board, then press space to run.</span>
-            <span class="nowrap">
-              Peg <b class="mono"><span class="hash" aria-hidden="true">#</span><span id="pieceDigits">&mdash;</span></b>
-              &middot; best <b class="mono" id="bestInline">0</b>.
-            </span>
+          <p class="sub searchsub">
+            Peg <b class="mono"><span class="hash" aria-hidden="true">#</span><span id="pieceDigits">&mdash;</span></b>
+            &middot; best <b class="mono" id="bestInline">0</b>.
           </p>
         </div>
       </header>
@@ -118,6 +115,13 @@
         <button type="button" id="changeBtn" class="btn quiet">Change peg</button>
         <button type="button" id="settingsBtn" class="btn quiet">Settings</button>
       </footer>
+
+      <!-- The controls live under the board, not inside it. In the board they
+           were a second banner line that vanished the moment you started. -->
+      <p class="controls" id="controls" hidden>
+        <kbd>Space</kbd> or <kbd>&uarr;</kbd> to jump &middot; <kbd>&darr;</kbd> to duck &middot;
+        dodge the Ethereum marks, duck the black winged unipeg
+      </p>
     </div>
 
     <dialog id="settings">

@@ -155,12 +155,47 @@ canvas {
    line below, at reading size.
 
    It is a plain GET form to google.com/search, so it works with page.js dead;
-   page.js only adds the empty-query guard and the offline state. */
+   page.js only adds the empty-query guard and the offline state.
+
+   CENTRED ON THE PAGE, not on the space left over beside the plate. The header
+   is a three-column grid: the plate in the first, the search in the second, and
+   an empty third column exactly as wide as the plate. Two equal outer tracks
+   put the middle track's centre on the page's centre, and the middle takes
+   every pixel they leave — wide AND centred, which is the whole ask.
+
+   The outer tracks are a fixed --plate-w rather than `1fr`. `1fr 1fr` looks
+   like it should balance and does not: an fr track whose min-content exceeds
+   its share freezes at min-content and the leftover is redistributed, so the
+   plate's column stayed 122px while the empty one collapsed to 0 and the bar
+   sat 61px right of centre. Measured, not guessed.
+
+   Scoped to the new tab: offline.html's header is a headline and a paragraph,
+   which want the full measure. */
+body[data-mode="newtab"] .head {
+  /* canvas 24 cells x 4px = 96, + 12px padding each side, + 1px border each
+     side. Kept in step with portraitTarget()'s basePx in pages/page.js; the
+     browser check in the round-4 verification asserts the two agree. */
+  --plate-w: 122px;
+  display: grid;
+  grid-template-columns: var(--plate-w) minmax(0, 1fr) var(--plate-w);
+  align-items: center;
+}
+
+/* Under ~860px the balancing column costs more field than the centring buys —
+   at 580px it would leave about 110px to actually type in. Below it the bar
+   simply takes everything beside the plate. This is a header-only breakpoint;
+   the page's other small-screen rules still switch at 560px. */
+@media (max-width: 860px) {
+  body[data-mode="newtab"] .head {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+}
+
 .search {
   display: flex;
   align-items: center;
   gap: 10px;
-  max-width: 34rem;
+  width: 100%;
 }
 
 .search input[type="search"] {
@@ -214,6 +249,38 @@ canvas {
 
 .sub .hash {
   color: var(--pink);
+}
+
+/* Centred under the centred bar, and no longer capped at 50ch — it is one
+   short line, not a paragraph. */
+.searchsub {
+  max-width: none;
+  text-align: center;
+  font-size: 13px;
+  margin-top: 10px;
+}
+
+/* ── the controls, under the board ─────────────────────────────────────── */
+
+/* They used to be the banner's second line, drawn inside the board, which meant
+   they disappeared the instant you pressed space — exactly when a new player
+   starts wanting them. Here they stay put for the whole run. */
+.controls {
+  margin: 0;
+  text-align: center;
+  color: var(--mute);
+  font-size: 13px;
+}
+
+kbd {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--ink);
+  background: var(--card);
+  border: 1px solid var(--mute);
+  border-bottom-width: 2px;
+  border-radius: 5px;
+  padding: 1px 6px;
 }
 
 .visually-hidden {
@@ -387,14 +454,28 @@ input[type="number"]::-webkit-inner-spin-button {
   border-radius: var(--radius);
   overflow: hidden;
   aspect-ratio: 2 / 1;
-  /* Never taller than what is left once the header, the score bar and the page
-     padding are paid for: these pages have `overflow: hidden` and must fit.
-     380px is the tallest measured non-board chrome on a wide viewport (the
-     offline header, 371px) plus a little slack. When the viewport is too short
-     to afford 340px, min and max meet and the board takes exactly what is
-     there rather than pushing the footer off the screen. */
-  min-height: min(340px, calc(100vh - 380px));
-  max-height: calc(100vh - 380px);
+  /* Never taller than what is left once the header, the score bar, the controls
+     line and the page padding are paid for: these pages have `overflow: hidden`
+     and must fit. When the viewport is too short to afford 340px, min and max
+     meet and the board takes exactly what is there rather than pushing the
+     footer off the screen. The reserve is set per mode below — one number for
+     both would cost the new tab 80px of board to pay for a header it does not
+     have. */
+  min-height: min(340px, calc(100vh - var(--reserve)));
+  max-height: calc(100vh - var(--reserve));
+}
+
+/* Both reserves are measured, not guessed: the chrome was swept from 400px to
+   1800px wide on the real pages and the peak taken, plus slack. The peaks land
+   at 580px — one notch above the small-screen breakpoint, where the copy has
+   wrapped but the tighter mobile spacing has not kicked in yet.
+     new tab   356px wide / 391px small     offline   438px wide / 478px small */
+body[data-mode="newtab"] {
+  --reserve: 372px;
+}
+
+body[data-mode="offline"] {
+  --reserve: 454px;
 }
 
 /* Absolute, so the board's height comes from the aspect ratio and the bounds
@@ -646,6 +727,13 @@ dialog h2 {
     align-items: flex-start;
   }
 
+  /* The two-column fallback is already in force from 860px down; here it only
+     needs to stop centring its rows, so the plate lines up with the field
+     rather than floating against a two-row block. */
+  body[data-mode="newtab"] .head {
+    align-items: start;
+  }
+
   .search {
     flex-wrap: wrap;
   }
@@ -659,10 +747,14 @@ dialog h2 {
      for only ~179px, so the floor is what actually sizes the board and it comes
      out close to square. That is the honest shape for a fixed-size sprite; the
      alternative is a unicorn that leaves the frame. Only the reserve changes:
-     the stacked mobile header and footer cost 421px, not 371px. */
-  .stage {
-    min-height: min(340px, calc(100vh - 430px));
-    max-height: calc(100vh - 430px);
+     the header stacks and the copy wraps, so both modes cost more. The .stage
+     rule itself is unchanged — it reads --reserve either way. */
+  body[data-mode="newtab"] {
+    --reserve: 406px;
+  }
+
+  body[data-mode="offline"] {
+    --reserve: 494px;
   }
 
   .setup {

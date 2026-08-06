@@ -263,6 +263,14 @@ modules, no npm dependencies, no bundler, no minifier. Edit a file, hit reload o
 A new tab is a place people type into, so the search bar is where the giant piece number
 used to be; the number moved down into the line under it, at reading size.
 
+- **It is centred on the page, not on the gap beside the plate.** The header is a
+  three-column grid — `1fr minmax(0, 46rem) 1fr` — with the plate in the first column,
+  the search in the second and nothing in the third. Two equal `fr` tracks put the middle
+  track's centre exactly on the page's centre whatever the plate happens to measure, and
+  when the window narrows enough that the plate outgrows its share, both outer tracks
+  grow together so the bar stays centred instead of drifting right. Below 560px it drops
+  to two columns: at that width the empty balancing column costs more than perfect
+  centring buys.
 - **New tab only.** `pages/offline.html` ships no `#searchForm` at all, so the code that
   wires it is a no-op there by construction. A search box that cannot reach anything is
   worse than no search box.
@@ -279,17 +287,28 @@ used to be; the number moved down into the line under it, at reading size.
 ## The obstacles
 
 The marks are Ethereum's octahedron drawn on the cell grid, at the runner's own integer
-scale, in **one flat `#3C3C3D`** — both faces of the solid are the same grey, so the
-silhouette carries the shape — with **`#627EEA` down the one-cell centre seam** and
-nowhere else. Grey outruns blue better than 3:1 in every size.
+scale, in **one flat `#3C3C3D`** and no other colour. All three facet keys — left face,
+seam, right face — resolve to the same grey, so the mark is a silhouette. Its chevron
+notch is *cut* rather than painted, which is why flattening the colours cannot fill it in
+and the shape still reads.
 
-They used to be sampled from the piece's own palette, three facets per mark. It looked
-good and read wrong: a red piece threw red diamonds, and the obstacle stopped saying
-"Ethereum" and started saying "stray bit of unicorn".
+Two rounds got here. The facets were sampled from the piece's own palette first, which
+made a red piece throw red diamonds: the obstacle stopped saying "Ethereum" and started
+saying "stray bit of unicorn". Then the faces went flat grey with a blue seam, and the
+seam was still one colour too many — a mark you have to read at a glance, at speed, while
+deciding whether to jump, does not want a second colour anywhere in it.
 
-Both colours are still passed through the contrast pass before they are drawn, so a page
-that hands the game a board they would sink into gets them lifted. On the white board
-these pages actually ship, neither moves.
+The grey is still passed through the contrast pass before it is drawn, so a page that
+hands the game a board it would sink into gets it lifted (and lifted flat — one colour in,
+one colour out). On the white board these pages actually ship, it does not move.
+
+## The controls line
+
+<kbd>Space</kbd>/<kbd>↑</kbd> to jump and <kbd>↓</kbd> to duck are page copy under the
+board, not part of the board. They used to be the ready banner's second line, drawn on the
+canvas, which meant they disappeared the instant you pressed space — exactly when a new
+player starts wanting them. The banner is now the call to action alone
+(`PRESS SPACE OR TAP TO RUN`), and `bannerLines("ready")` returns one string.
 
 ## Accessibility and motion
 

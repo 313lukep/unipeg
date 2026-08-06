@@ -302,6 +302,7 @@ function showOnly(which) {
   show(el("offState"), which === "off");
   show(el("stage"), which === "play");
   show(el("foot"), which === "play");
+  show(el("controls"), which === "play");
   // The new tab header is nothing but the piece, so it has nothing to say
   // before one is chosen; the offline header still has to say "you're offline".
   const head = document.querySelector(".head");

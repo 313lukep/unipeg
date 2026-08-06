@@ -2,8 +2,8 @@
  * upegRUN — the offline runner.
  *
  * An endless runner drawn entirely from the user's own piece: the unicorn is
- * the piece's run frames, the obstacles are pixel Ethereum marks in Ethereum's
- * own grey, and the thing in the sky is a blacked-out Unipeg.
+ * the piece's run frames, the obstacles are pixel Ethereum marks in one flat
+ * Ethereum grey, and the thing in the sky is a blacked-out Unipeg.
  * No network, no assets, no timers that depend on frame rate.
  *
  * The simulation is split so the interesting parts are pure and unit-tested:
@@ -652,26 +652,29 @@ const isHex = (v) => typeof v === "string" && /^#[0-9a-fA-F]{3,8}$/.test(v);
 
 const PINK = "#FF4DA1";
 
-/** Ethereum's own grey, and its blue. */
+/** Ethereum's own grey. The marks are this colour and no other. */
 export const ETH_GREY = "#3C3C3D";
-export const ETH_BLUE = "#627EEA";
 
 /**
- * THE MARKS ARE ONE GREY.
+ * THE MARKS ARE ONE GREY — ALL THREE FACETS, NO EXCEPTIONS.
  *
- * They used to be sampled from the piece's own palette, three facets per mark.
- * It was pretty and it was wrong: a red piece threw red diamonds, and the
- * obstacle stopped reading as Ethereum and started reading as a stray bit of
- * unicorn. So `L` (left face) and `D` (right face) are now the same flat
- * #3C3C3D — the two faces merge and the silhouette carries the whole shape —
- * and only the seam wears the blue.
+ * Two rounds got here. First the facets were sampled from the piece's own
+ * palette, which made a red piece throw red diamonds: the obstacle stopped
+ * reading as Ethereum and started reading as a stray bit of unicorn. Then the
+ * faces went flat grey with a blue seam, and the seam was still one colour too
+ * many — a mark that has to be read at a glance, at speed, while you decide
+ * whether to jump, does not want a second colour anywhere in it.
  *
- * The seam is one cell wide, whatever the mark's size: 10 blue cells in a 55-
- * cell small mark, and the same hairline on the large one. That is the entire
- * highlight. `eth-marks.test.ts` pins the share so it can never creep wider.
+ * So `L`, `M` and `D` are the same #3C3C3D and the octahedron is a silhouette.
+ * The shape reads on its own; the mark's chevron notch is cut out of the
+ * silhouette, not painted, so it survives the flattening intact.
+ *
+ * The three keys stay because the row data is written in them. Returning one
+ * colour under three names is the whole point: nothing downstream has to know
+ * the marks stopped being faceted.
  */
 export function ethFacets() {
-  return { L: ETH_GREY, M: ETH_BLUE, D: ETH_GREY };
+  return { L: ETH_GREY, M: ETH_GREY, D: ETH_GREY };
 }
 
 /* ------------------------------------------------------ colour + contrast */
@@ -966,7 +969,10 @@ export function bannerLines(state, score = 0, high = 0) {
     return ["CRASHED - PRESS SPACE TO RUN AGAIN", `SCORE ${score}   BEST ${Math.max(high, score)}`];
   }
   if (state === "ready") {
-    return ["PRESS SPACE OR TAP TO RUN", "SPACE JUMPS - DOWN ARROW DUCKS"];
+    // One line, not two. The controls used to be spelled out here as a second
+    // line; they live under the board now, where they stay readable while the
+    // run is going instead of vanishing the moment you start.
+    return ["PRESS SPACE OR TAP TO RUN"];
   }
   return [];
 }
@@ -1404,7 +1410,7 @@ export function startGame({
     drawBanner(bannerLines(state, score, high));
   }
 
-  /** One Ethereum mark: flat grey faces, one blue cell down the seam. */
+  /** One Ethereum mark, in one flat grey. */
   function drawMark(o) {
     const x0 = Math.round(o.x);
     for (const r of o.shape.paint) {

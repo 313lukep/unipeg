@@ -101,12 +101,36 @@ describe("stage framing — the board is sized by the jump arc", () => {
     expect(aspectRatio(BUILD_PLAYABLE, "#stage")).toBe(aspectRatio(PAGE_CSS, "\\.stage"));
   });
 
-  it("the narrow-screen rule keeps the same floor as the wide one", () => {
+  it("the narrow screen changes the reserve and never the floor", () => {
     // The runner is the same 96 CSS px tall on a phone, so the arc needs the
-    // same room; only the reserve subtracted for page chrome changes.
+    // same room. The floor therefore lives in ONE `.stage` rule; what varies by
+    // screen and by page is only `--reserve`, the chrome subtracted around it.
+    // Anything that re-declares min-height in the media query is the regression
+    // this guards, so assert the single rule rather than compare two.
+    const stageRules = PAGE_CSS.match(/\.stage\s*\{[^}]*min-height[^}]*\}/g) || [];
+    expect(stageRules).toHaveLength(1);
+    expect(heightFloorPx(PAGE_CSS, "\\.stage")).toBe(340);
+
     const media = /@media \(max-width: 560px\)\s*\{([\s\S]*?)\n\}/.exec(PAGE_CSS);
     expect(media).not.toBeNull();
-    expect(heightFloorPx(media![1], "\\.stage")).toBe(heightFloorPx(PAGE_CSS, "\\.stage"));
+
+    // Both modes carry a reserve at both sizes, and the narrow one is always
+    // the larger: the header stacks and the copy wraps, so the chrome grows.
+    for (const mode of ["newtab", "offline"]) {
+      const sel = `body\\[data-mode="${mode}"\\]`;
+      const wide = Number(/(\d+)px/.exec(declaration(PAGE_CSS, sel, "--reserve"))![1]);
+      const narrow = Number(/(\d+)px/.exec(declaration(media![1], sel, "--reserve"))![1]);
+      expect([mode, narrow > wide]).toEqual([mode, true]);
+      // Both leave the 340px floor reachable on a laptop-sized window.
+      expect([mode, 900 - narrow >= 340]).toEqual([mode, true]);
+    }
+
+    // The offline header is the tall one — headline, paragraph and buttons —
+    // so it must never be given the smaller reserve of the two.
+    const reserve = (css: string, mode: string) =>
+      Number(/(\d+)px/.exec(declaration(css, `body\\[data-mode="${mode}"\\]`, "--reserve"))![1]);
+    expect(reserve(PAGE_CSS, "offline")).toBeGreaterThan(reserve(PAGE_CSS, "newtab"));
+    expect(reserve(media![1], "offline")).toBeGreaterThan(reserve(media![1], "newtab"));
   });
 
   it("the high flyer lane is fully visible at the board floor", () => {
