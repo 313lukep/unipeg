@@ -7,6 +7,8 @@ import {
   BLIP_HZ,
   BLIP_SECONDS,
   DEFAULTS,
+  ETH_BLUE,
+  ETH_GREY,
   ETH_LARGE,
   ETH_SMALL,
   ETH_TALL,
@@ -18,7 +20,7 @@ import {
   clusterShape,
   collides,
   contrastRatio,
-  facetColours,
+  ethFacets,
   flyerLanes,
   jump,
   jumpArc,
@@ -466,24 +468,34 @@ describe("game.js — obstacles are Ethereum marks", () => {
     expect(clusterShape(ETH_SMALL, 1)).toBe(ETH_SMALL);
   });
 
-  it("orders the facets light / seam / dark by luminance", () => {
-    const { L, M, D } = facetColours(["#1e1e26", "#a0a0a0", "#f7f7f8"], 0);
-    expect(L).toBe("#f7f7f8");
-    expect(M).toBe("#a0a0a0");
-    expect(D).toBe("#1e1e26");
+  it("paints both faces the one grey, and only the seam blue", () => {
+    expect(ethFacets()).toEqual({ L: ETH_GREY, M: ETH_BLUE, D: ETH_GREY });
+    expect(ETH_GREY).toBe("#3C3C3D");
+    expect(ETH_BLUE).toBe("#627EEA");
   });
 
-  it("survives a piece with one colour, and one with none", () => {
-    expect(facetColours(["#ac3232"])).toEqual({ L: "#ac3232", M: "#ac3232", D: "#ac3232" });
-    expect(facetColours([])).toEqual({ L: "#FF4DA1", M: "#FF4DA1", D: "#FF4DA1" });
-    expect(facetColours(["nope", ""] as string[])).toEqual({ L: "#FF4DA1", M: "#FF4DA1", D: "#FF4DA1" });
-  });
-
-  it("varies which of a rich palette a mark wears", () => {
-    const palette = ["#ac3232", "#5fcde4", "#e7d632", "#37946e", "#cb67d2", "#306082"];
-    const seen = new Set<string>();
-    for (let i = 0; i < 60; i++) seen.add(JSON.stringify(facetColours(palette, i / 60)));
-    expect(seen.size).toBeGreaterThan(1);
+  it("keeps the blue a hairline — one cell wide, a small share of the mark", () => {
+    for (const [name, shape] of [
+      ["small", ETH_SMALL],
+      ["large", ETH_LARGE],
+      ["tall", ETH_TALL],
+    ] as const) {
+      // The seam is never a run: every blue span in `paint` is exactly one cell.
+      const seams = shape.paint.filter((r) => r.facet === "M");
+      for (const r of seams) expect([name, r.w]).toEqual([name, 1]);
+      // And at most one seam cell per row, so it reads as a line, not a band.
+      for (const row of shape.rows) {
+        expect([name, row.split("").filter((c) => c === "M").length]).toEqual([
+          name,
+          row.includes("M") ? 1 : 0,
+        ]);
+      }
+      // Grey outnumbers blue at least 3 to 1 in every mark: the 7-cell-wide
+      // small one is the tightest at 32:10, the large one runs 94:17.
+      const filled = shape.rows.join("").split("").filter((c) => c !== ".").length;
+      const grey = filled - seams.length;
+      expect([name, grey >= seams.length * 3]).toEqual([name, true]);
+    }
   });
 
   it("compiles arbitrary rows without inventing cells", () => {
@@ -554,13 +566,21 @@ describe("game.js — nothing vanishes into the board", () => {
     expect(readable(undefined as unknown as string, NEAR_BLACK)).toBe("#ffffff");
   });
 
-  it("keeps a mark's three facets visible on any board", () => {
-    for (const board of [WHITE, NEAR_BLACK, "#161619", "#cbbba0"]) {
-      const facets = readableFacets(facetColours(["#fcf893", "#f7f7f8", "#1e1e26"], 0), board, 2);
+  it("keeps a mark's grey and its seam visible on any board", () => {
+    for (const board of [WHITE, NEAR_BLACK, "#161619", "#cbbba0", ETH_GREY]) {
+      const facets = readableFacets(ethFacets(), board, 2);
       for (const c of [facets.L, facets.M, facets.D]) {
         expect([board, c, contrastRatio(c, board) >= 2]).toEqual([board, c, true]);
       }
     }
+  });
+
+  it("leaves the Ethereum colours untouched on the white board the pages ship", () => {
+    expect(readableFacets(ethFacets(), WHITE, 2)).toEqual({
+      L: ETH_GREY,
+      M: ETH_BLUE,
+      D: ETH_GREY,
+    });
   });
 });
 
@@ -1561,8 +1581,8 @@ describe("game.js — startGame shell", () => {
     return { seen, canvas, board: snap.board };
   }
 
-  it("takes the piece colours from either a plain array or a theme object", () => {
-    const { seen, canvas } = paintedColours({
+  it("takes its surface from the theme object, and its marks from Ethereum", () => {
+    const { seen, canvas, board } = paintedColours({
       // the shape the page actually sends: tokens + the piece's colours
       paper: "#0b0b0d",
       card: "#161619",
@@ -1571,7 +1591,10 @@ describe("game.js — startGame shell", () => {
       accent: "#ff4da1",
       piece: ["#ac3232"],
     });
-    expect(seen.has("#ac3232")).toBe(true); // marks wear the piece's colour
+    const marks = readableFacets(ethFacets(), board, DEFAULTS.facetContrast);
+    expect(seen.has(marks.L)).toBe(true); // grey faces
+    expect(seen.has(marks.M)).toBe(true); // blue seam
+    expect(seen.has("#ac3232")).toBe(false); // the piece's colour never lands on a mark
     expect(seen.has("#9c9ca6")).toBe(true); // ground line uses the page's mute
     expect(seen.has("#161619")).toBe(true); // and the board is the page's card
     expect(seen.has("#FF4DA1")).toBe(false); // never falls back to raw pink
@@ -1599,11 +1622,12 @@ describe("game.js — startGame shell", () => {
       // Every other colour the game paints holds a real ratio against white.
       expect([colour, contrastRatio(colour, "#ffffff") >= DEFAULTS.facetContrast]).toEqual([colour, true]);
     }
-    // ...and the pale piece colours were pushed, not replaced: still warm, not
-    // black, and still three distinguishable facets.
+    // ...and no pale piece colour was drafted onto a mark in the first place:
+    // the marks are Ethereum's grey and blue, both already legible on white, so
+    // the contrast pass has nothing to spend.
     expect(seen.has("#fcf893")).toBe(false);
-    const marks = [...seen].filter((c) => contrastRatio(c, "#0b0b0d") > 2 && c !== "#ffffff");
-    expect(marks.length).toBeGreaterThan(1);
+    expect(seen.has(ETH_GREY)).toBe(true);
+    expect(seen.has(ETH_BLUE)).toBe(true);
   });
 
   it("keeps the dark board exactly as it was", () => {
@@ -1615,11 +1639,17 @@ describe("game.js — startGame shell", () => {
       piece: ["#ac3232", "#5fcde4"],
     });
     expect(board).toBe("#161619");
-    // A normal piece on a near-black board is untouched — the contrast pass
-    // only ever spends what it has to.
-    expect(seen.has("#ac3232")).toBe(true);
-    expect(seen.has("#5fcde4")).toBe(true);
+    // Page tokens on a near-black board are untouched — the contrast pass only
+    // ever spends what it has to.
     expect(seen.has("#f7f7f8")).toBe(true);
+    expect(seen.has("#9c9ca6")).toBe(true);
+    // The one colour it does spend on is the mark's grey: #3C3C3D is 1.64:1
+    // against #161619, so it gets lifted just far enough to be seen.
+    const marks = readableFacets(ethFacets(), board, DEFAULTS.facetContrast);
+    expect(marks.L).not.toBe(ETH_GREY);
+    expect(contrastRatio(marks.L, board)).toBeGreaterThanOrEqual(DEFAULTS.facetContrast);
+    expect(seen.has(marks.L)).toBe(true);
+    expect(marks.M).toBe(ETH_BLUE); // the blue already clears it
   });
 
   it("is losable: a player who never jumps crashes into the first mark", async () => {

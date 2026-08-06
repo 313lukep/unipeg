@@ -1,4 +1,4 @@
-# unipegPFP — Offline Unipeg
+# upegRUN — Offline Unipeg
 
 A Chrome extension that puts your Unipeg where you'll actually see it: on every new
 tab, and on the page Chrome shows you when the internet drops. Both come with a
@@ -9,7 +9,7 @@ It works with the network completely off. That is the whole point.
 ## What it does
 
 **New tab takeover.** `chrome_url_overrides.newtab` points at `pages/newtab.html`, so
-every new tab is your piece: the number in the masthead, the artwork on a plate, and a
+every new tab is your piece: the artwork on a plate, a Google search bar beside it, and a
 board you can play on.
 
 **Offline redirect.** The service worker watches for failed top-level navigations. When
@@ -224,6 +224,10 @@ own new tab back, disable or remove the extension from `chrome://extensions`.
 
 ## Storage keys
 
+They are still prefixed `upegpfp.`, and they stay that way. The extension was renamed to
+**upegRUN** after the first builds shipped; renaming the keys would silently un-lock every
+piece someone had already chosen. A prefix is not a brand.
+
 | Key | Type | Meaning |
 |---|---|---|
 | `upegpfp.pieceId` | number | Your piece. Ids are global mint serials, validated 1–400000. |
@@ -253,6 +257,39 @@ icons/             16/48/128, rendered from piece #185206
 There is **no build step**. The extension loads unpacked exactly as it sits: plain ES
 modules, no npm dependencies, no bundler, no minifier. Edit a file, hit reload on
 `chrome://extensions`.
+
+## The new tab's search bar
+
+A new tab is a place people type into, so the search bar is where the giant piece number
+used to be; the number moved down into the line under it, at reading size.
+
+- **New tab only.** `pages/offline.html` ships no `#searchForm` at all, so the code that
+  wires it is a no-op there by construction. A search box that cannot reach anything is
+  worse than no search box.
+- **It is a plain form**: `<form action="https://www.google.com/search" method="get">`
+  with an `q` input. It submits correctly with `page.js` never loaded. The script only
+  adds the two things markup cannot: refusing an empty query, and going quiet with a
+  "No connection" placeholder while `navigator.onLine` is `false`.
+- **It never takes focus.** A new tab hands the keyboard to the omnibox; autofocusing
+  here would mean your first space bar types a space instead of jumping. Click the board
+  (or press <kbd>Esc</kbd> in the field) and the game has the keyboard back.
+- **Typing never drives the game.** Both `page.js` and `lib/game.js` ignore key events
+  whose target is an `input`, so <kbd>Space</kbd> in the search field is a space.
+
+## The obstacles
+
+The marks are Ethereum's octahedron drawn on the cell grid, at the runner's own integer
+scale, in **one flat `#3C3C3D`** — both faces of the solid are the same grey, so the
+silhouette carries the shape — with **`#627EEA` down the one-cell centre seam** and
+nowhere else. Grey outruns blue better than 3:1 in every size.
+
+They used to be sampled from the piece's own palette, three facets per mark. It looked
+good and read wrong: a red piece threw red diamonds, and the obstacle stopped saying
+"Ethereum" and started saying "stray bit of unicorn".
+
+Both colours are still passed through the contrast pass before they are drawn, so a page
+that hands the game a board they would sink into gets them lifted. On the white board
+these pages actually ship, neither moves.
 
 ## Accessibility and motion
 
@@ -292,7 +329,7 @@ modules, no npm dependencies, no bundler, no minifier. Edit a file, hit reload o
 
 ## Not affiliated
 
-unipegPFP is a community tool. Unipeg (`$uPEG`) is an ERC-20 on Ethereum mainnet at
+upegRUN is a community tool. Unipeg (`$uPEG`) is an ERC-20 on Ethereum mainnet at
 `0x44b28991b167582f18ba0259e0173176ca125505`; the art is rendered on-chain as SVG from a
 24×24 grid, and this extension renders it from a verified byte-for-byte port of that
 renderer.

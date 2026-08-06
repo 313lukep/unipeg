@@ -1,9 +1,9 @@
 /**
- * unipegPFP extension — the offline runner.
+ * upegRUN — the offline runner.
  *
  * An endless runner drawn entirely from the user's own piece: the unicorn is
- * the piece's run frames, the obstacles are pixel Ethereum marks painted in the
- * piece's own colours, and the thing in the sky is a blacked-out Unipeg.
+ * the piece's run frames, the obstacles are pixel Ethereum marks in Ethereum's
+ * own grey, and the thing in the sky is a blacked-out Unipeg.
  * No network, no assets, no timers that depend on frame rate.
  *
  * The simulation is split so the interesting parts are pure and unit-tested:
@@ -652,25 +652,26 @@ const isHex = (v) => typeof v === "string" && /^#[0-9a-fA-F]{3,8}$/.test(v);
 
 const PINK = "#FF4DA1";
 
+/** Ethereum's own grey, and its blue. */
+export const ETH_GREY = "#3C3C3D";
+export const ETH_BLUE = "#627EEA";
+
 /**
- * Three facet colours for one mark, sampled from the piece's own palette:
- * lightest colour on the left face, darkest on the right, the middle one on
- * the seam. `rand` rotates which three of the piece's colours get used, so a
- * seven-colour piece does not paint every mark identically. A piece with one
- * colour gets one flat mark — the silhouette is what has to read, and it does.
+ * THE MARKS ARE ONE GREY.
+ *
+ * They used to be sampled from the piece's own palette, three facets per mark.
+ * It was pretty and it was wrong: a red piece threw red diamonds, and the
+ * obstacle stopped reading as Ethereum and started reading as a stray bit of
+ * unicorn. So `L` (left face) and `D` (right face) are now the same flat
+ * #3C3C3D — the two faces merge and the silhouette carries the whole shape —
+ * and only the seam wears the blue.
+ *
+ * The seam is one cell wide, whatever the mark's size: 10 blue cells in a 55-
+ * cell small mark, and the same hairline on the large one. That is the entire
+ * highlight. `eth-marks.test.ts` pins the share so it can never creep wider.
  */
-export function facetColours(palette, rand = 0) {
-  const cs = [...new Set((palette || []).filter(isHex))];
-  if (!cs.length) return { L: PINK, M: PINK, D: PINK };
-  const start = Math.floor(Math.min(Math.max(rand, 0), 0.999) * cs.length);
-  const picked = [];
-  for (let i = 0; i < Math.min(3, cs.length); i++) picked.push(cs[(start + i) % cs.length]);
-  picked.sort((a, b) => relLuminance(a) - relLuminance(b));
-  return {
-    D: picked[0],
-    M: picked[Math.floor((picked.length - 1) / 2)],
-    L: picked[picked.length - 1],
-  };
+export function ethFacets() {
+  return { L: ETH_GREY, M: ETH_BLUE, D: ETH_GREY };
 }
 
 /* ------------------------------------------------------ colour + contrast */
@@ -838,21 +839,6 @@ const PAPER = "#0B0B0D";
 const SHADOW = "#0b0b0d";
 
 /**
- * `palette` may be the piece's colours as a plain array (the shared contract's
- * minimum) or a theme object carrying them under `piece`/`colours` alongside
- * the page's own tokens. Accept both, so the game stays in palette with
- * whatever the page hands it.
- */
-function pieceColours(palette) {
-  const raw = Array.isArray(palette)
-    ? palette
-    : palette && typeof palette === "object"
-      ? palette.piece || palette.colours || []
-      : [];
-  return (Array.isArray(raw) ? raw : []).filter(isHex);
-}
-
-/**
  * The board's own colours, resolved from whatever the page passed.
  *
  * THE BOARD IS NOT ASSUMED TO BE DARK. The page owns the theme and may flip it
@@ -1016,8 +1002,10 @@ export function bannerPlacement({ lines, size, lead, groundY, spriteH, height })
  * @param {HTMLCanvasElement[]} opts.frames  run-cycle frames from buildRunFrames.
  *   The array also carries `.duck` and `.flyer` frame sets; pass them
  *   separately as `duckFrames` / `flyerFrames` to override.
- * @param {string[]|object} opts.palette     the piece's own colours — either a
- *   plain array, or a theme object with them under `piece`
+ * @param {string[]|object} opts.palette     the page's surface tokens (`board`
+ *   / `card` / `paper`, `ink`, `mute`, `accent`). A plain array is accepted for
+ *   backwards compatibility and simply falls through to the defaults — the
+ *   obstacles no longer wear the piece's colours, so nothing reads it.
  * @param {(score:number, meta:{high:number,state:string})=>void} [opts.onScore]
  * @param {number} [opts.scale]              device-pixel ratio the page sized
  *   the canvas and the sprite frames at; keeps the blit exactly 1:1
@@ -1065,9 +1053,11 @@ export function startGame({
   // Obstacles are painted at the unicorn's own cell scale, so a mark is made of
   // exactly the same size pixels the art is.
   const obstacleUnit = cellPx;
-  const found = pieceColours(palette);
-  const colours = (found.length ? found : [PINK]).slice(0, 7);
   const theme = paletteTheme(palette);
+  // Fixed for the whole run — the marks no longer sample the piece. Still passed
+  // through the contrast pass, because a page is allowed to hand us a board this
+  // grey would sink into.
+  const markFacets = readableFacets(ethFacets(), theme.board, cfg.facetContrast);
 
   // Everything below is in device pixels, derived once from the sprite height.
   const gravity = cfg.gravity * spriteH;
@@ -1258,17 +1248,13 @@ export function startGame({
     const pattern = pickPattern(rng(), speed, dims(), lastPattern, cfg);
     lastPattern = pattern.name;
     const origin = width + obstacleUnit;
-    // One roll of the piece's palette per pattern, not per mark: a pattern is
-    // one thing the player reads, and two marks a cell apart in two different
-    // colour schemes read as noise.
-    const facets = readableFacets(facetColours(colours, rng()), theme.board, cfg.facetContrast);
     for (const part of patternParts(pattern, speed * spriteH, obstacleUnit)) {
       obstacles.push({
         kind: "eth",
         pattern: pattern.name,
         x: origin + part.x,
         shape: part.shape,
-        facets,
+        facets: markFacets,
         w: part.w,
         h: part.h,
         y: groundY - part.h,
@@ -1418,7 +1404,7 @@ export function startGame({
     drawBanner(bannerLines(state, score, high));
   }
 
-  /** One Ethereum mark, in the piece's own colours. */
+  /** One Ethereum mark: flat grey faces, one blue cell down the seam. */
   function drawMark(o) {
     const x0 = Math.round(o.x);
     for (const r of o.shape.paint) {

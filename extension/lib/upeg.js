@@ -1,5 +1,5 @@
 /**
- * unipegPFP extension — offline Unipeg renderer.
+ * upegRUN extension — offline Unipeg renderer.
  *
  * A plain browser ES module (no build step, no npm, no network). It is a direct
  * port of the repo's fixture-verified TypeScript renderer

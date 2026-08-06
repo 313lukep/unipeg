@@ -1,5 +1,5 @@
 /**
- * unipegPFP — Offline Unipeg · MV3 service worker.
+ * upegRUN — Offline Unipeg · MV3 service worker.
  *
  * Single job: when a top-level navigation fails because the machine genuinely
  * has no connectivity, send that tab to our own offline page (which renders the

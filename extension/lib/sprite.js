@@ -1,5 +1,5 @@
 /**
- * unipegPFP extension — sprite building.
+ * upegRUN extension — sprite building.
  *
  * Turns a 24x24 Unipeg grid into the run-cycle frames the offline/new-tab game
  * animates. Everything is integer cell maths; the only floating point in the

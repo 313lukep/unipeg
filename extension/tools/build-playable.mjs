@@ -25,7 +25,7 @@ const upeg = strip(readFileSync(`${EXT}/lib/upeg.js`, "utf8"));
 const sprite = strip(readFileSync(`${EXT}/lib/sprite.js`, "utf8"));
 const game = strip(readFileSync(`${EXT}/lib/game.js`, "utf8"));
 
-const html = `<title>unipegPFP Runner — play your Unipeg</title>
+const html = `<title>upegRUN Runner — play your Unipeg</title>
 <style>
   :root {
     /* Committed LIGHT palette — docs/DESIGN.md's light column, identical to the
@@ -89,9 +89,27 @@ const html = `<title>unipegPFP Runner — play your Unipeg</title>
   :focus-visible { outline: 2px solid var(--pink); outline-offset: 2px; }
 
   .preview { display: flex; align-items: center; gap: 14px; }
-  #portrait { image-rendering: pixelated; border-radius: 8px; background: var(--paper); }
+  #portrait, #ntPortrait { image-rendering: pixelated; border-radius: 8px; background: var(--paper); }
   .pieceNum { font-size: 26px; font-weight: 700; }
   .pieceNum span { color: var(--pink); font-size: 0.6em; vertical-align: top; }
+
+  /* The new tab's header, mirrored: the piece on a plate and Google beside it.
+     Same markup shape as pages/newtab.html — plain GET form, no autofocus, so
+     the first space bar still jumps. It opens in a new tab here so this preview
+     page survives the click. */
+  .ntbar { display: flex; align-items: center; gap: 14px; }
+  .plate { flex: none; background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 10px; line-height: 0; }
+  .search { display: flex; align-items: center; gap: 10px; flex: 1; min-width: 0; }
+  .search input[type="search"] {
+    flex: 1; min-width: 0; font: inherit; font-size: 16px;
+    background: var(--paper); color: var(--ink); caret-color: var(--pink);
+    border: 1px solid var(--mute); border-radius: 999px; padding: 12px 20px; min-height: 48px;
+    appearance: none;
+  }
+  .search input[type="search"]::-webkit-search-decoration,
+  .search input[type="search"]::-webkit-search-cancel-button { appearance: none; }
+  .search input[type="search"]::placeholder { color: var(--mute); }
+  .search button { flex: none; min-height: 48px; }
 
   /* Board height is set by the jump arc, exactly as pages/page.css sets it —
      keep the two in step. The runner is a fixed 84 CSS px tall, the ground sits
@@ -121,7 +139,7 @@ const html = `<title>unipegPFP Runner — play your Unipeg</title>
 
 <div class="wrap">
   <header>
-    <div class="brand">unipeg<b>PFP</b> runner</div>
+    <div class="brand">upeg<b>RUN</b></div>
     <div class="eyebrow">extension preview</div>
   </header>
 
@@ -145,6 +163,16 @@ const html = `<title>unipegPFP Runner — play your Unipeg</title>
     </div>
     <div class="hint" id="aliveLine"></div>
   </section>
+
+  <div class="ntbar hidden" id="ntbar">
+    <div class="plate"><canvas id="ntPortrait" width="96" height="96" role="img" aria-label="Your Unipeg"></canvas></div>
+    <form class="search" id="searchForm" role="search" action="https://www.google.com/search"
+          method="get" target="_blank" rel="noopener">
+      <input type="search" id="searchInput" name="q" placeholder="Search Google"
+             aria-label="Search Google" autocomplete="off" spellcheck="false" enterkeyhint="search" />
+      <button type="submit">SEARCH</button>
+    </form>
+  </div>
 
   <div id="stage" class="hidden"><canvas id="run"></canvas></div>
 
@@ -202,8 +230,8 @@ function fitCanvas(canvas, w, h) {
   ctx.imageSmoothingEnabled = false;
 }
 
-function drawPortrait(grid) {
-  const c = el("portrait");
+function drawPortrait(grid, id = "portrait") {
+  const c = el(id);
   const cell = 4 * deviceScale();
   c.width = 24 * cell; c.height = 24 * cell;
   c.style.width = c.style.height = 24 * 4 + "px";
@@ -236,7 +264,9 @@ async function play() {
   el("stage").classList.remove("hidden");
   el("hud").classList.remove("hidden");
   el("controls").classList.remove("hidden");
+  el("ntbar").classList.remove("hidden");
   el("setup").classList.add("hidden");
+  drawPortrait(state.grid, "ntPortrait");
   const stage = el("stage");
   const canvas = el("run");
   // Content box, not border box — the 1px border would otherwise push a row of
@@ -273,8 +303,23 @@ el("changeBtn").onclick = () => {
   el("stage").classList.add("hidden");
   el("hud").classList.add("hidden");
   el("controls").classList.add("hidden");
+  el("ntbar").classList.add("hidden");
   el("setup").classList.remove("hidden");
 };
+
+// The one thing markup cannot do: refuse an empty query rather than opening a
+// blank results page. Deliberately no autofocus — see pages/newtab.html.
+el("searchForm").addEventListener("submit", (e) => {
+  const q = el("searchInput");
+  if (q.value.trim() === "") { e.preventDefault(); q.focus(); return; }
+  q.value = q.value.trim();
+});
+el("searchInput").addEventListener("keydown", (e) => {
+  if (e.key !== "Escape") return;
+  el("searchInput").value = "";
+  el("searchInput").blur();
+  el("run").focus();
+});
 // Height counts as well as width: the board is bounded by calc(100vh - …).
 window.addEventListener("resize", () => {
   if (!state.game) return;

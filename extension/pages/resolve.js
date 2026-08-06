@@ -1,5 +1,5 @@
 /**
- * unipegPFP — Offline Unipeg · piece lookup.
+ * upegRUN — Offline Unipeg · piece lookup.
  *
  * Shared by pages/page.js and popup.js. Plain ES module, no build step.
  *
@@ -93,7 +93,7 @@ async function mergeOverlay(upeg, remote) {
       await chrome.storage.local.set({ [OVERLAY_KEY]: overlay });
     } catch (err) {
       // Quota or a closing popup — the in-memory copy still serves this session.
-      console.warn("unipegPFP: could not cache the fetched pieces", err);
+      console.warn("upegRUN: could not cache the fetched pieces", err);
     }
   }
   return added;
@@ -151,7 +151,7 @@ export async function resolvePiece(upeg, id, opts = {}) {
   try {
     seed = await upeg.seedForId(id);
   } catch (err) {
-    console.error("unipegPFP: bundled snapshot unreadable", err);
+    console.error("upegRUN: bundled snapshot unreadable", err);
     return { seed: null, source: null, reason: "broken" };
   }
   if (seed !== null && seed !== undefined) return { seed, source: "bundled", reason: null };

@@ -1,5 +1,5 @@
 /**
- * unipegPFP — Offline Unipeg · shared page script for offline.html + newtab.html.
+ * upegRUN — Offline Unipeg · shared page script for offline.html + newtab.html.
  *
  * Both entries share everything below the header: the setup panel, the piece
  * portrait, the runner, the score bar and settings. The only per-mode difference
@@ -15,6 +15,8 @@
 
 import { resolvePiece, missMessage, canFetch } from "./resolve.js";
 
+// The `upegpfp.` prefix predates the rename to upegRUN and is deliberately kept:
+// changing it would un-lock the piece of everyone already running the extension.
 const KEY = {
   piece: "upegpfp.pieceId",
   locked: "upegpfp.pieceLocked",
@@ -143,14 +145,14 @@ async function loadLibs() {
     lib.upeg = upeg;
     lib.sprite = sprite;
   } catch (err) {
-    console.error("unipegPFP: renderer failed to load", err);
+    console.error("upegRUN: renderer failed to load", err);
     return false;
   }
   // The game is a nice-to-have; a broken game must not cost you the artwork.
   try {
     lib.game = await import("../lib/game.js");
   } catch (err) {
-    console.error("unipegPFP: game failed to load", err);
+    console.error("upegRUN: game failed to load", err);
   }
   return true;
 }
@@ -216,7 +218,7 @@ function stopGame() {
     try {
       state.game.stop();
     } catch (err) {
-      console.error("unipegPFP: game stop failed", err);
+      console.error("upegRUN: game stop failed", err);
     }
   }
   state.game = null;
@@ -247,7 +249,7 @@ function bootGame() {
       reducedMotion,
     });
   } catch (err) {
-    console.error("unipegPFP: game failed to start", err);
+    console.error("upegRUN: game failed to start", err);
     setHint("Runner unavailable — the artwork is still yours");
   }
 }
@@ -660,6 +662,62 @@ function isTypingTarget(node) {
   );
 }
 
+/* ── the new tab's search bar ─────────────────────────────────────────── */
+
+/**
+ * NEW TAB ONLY. offline.html ships no `#searchForm`, so this is a no-op there
+ * by construction rather than by a mode check — a search box that cannot reach
+ * anything is worse than no search box.
+ *
+ * The form is a real GET to google.com/search and submits fine with this
+ * function never called. All it adds is the two things markup cannot do:
+ * refusing an empty query (which would land on a blank results page), and
+ * saying so when there is no connection.
+ *
+ * It never takes focus. A new tab hands the keyboard to the omnibox, and the
+ * board is one click away; autofocusing here would mean the first space bar
+ * types a space instead of jumping. `isTypingTarget` keeps the game's window
+ * handlers off the field for as long as it does have focus.
+ */
+function wireSearch() {
+  const form = el("searchForm");
+  if (!form) return;
+  const input = el("searchInput");
+  const button = el("searchBtn");
+
+  const paintConnection = () => {
+    const off = navigator.onLine === false;
+    if (off) form.setAttribute("data-offline", "");
+    else form.removeAttribute("data-offline");
+    if (button) button.disabled = off;
+    if (input) {
+      input.placeholder = off ? "No connection — the runner still works" : "Search Google";
+    }
+  };
+  paintConnection();
+  window.addEventListener("online", paintConnection);
+  window.addEventListener("offline", paintConnection);
+
+  form.addEventListener("submit", (event) => {
+    if (navigator.onLine === false || !input || input.value.trim() === "") {
+      event.preventDefault();
+      if (input) input.focus();
+      return;
+    }
+    // Submit the trimmed query, not the one with the stray spaces in it.
+    input.value = input.value.trim();
+  });
+
+  // Escape hands the page back: blur the field so space jumps again.
+  input?.addEventListener("keydown", (event) => {
+    if (event.key !== "Escape") return;
+    input.value = "";
+    input.blur();
+    const canvas = el("run");
+    if (canvas && !el("stage").hidden) canvas.focus({ preventScroll: true });
+  });
+}
+
 function wireKeys() {
   // Space must jump, not scroll the page — but never steal it from a control.
   window.addEventListener(
@@ -735,6 +793,7 @@ function wireStorage() {
 
 async function main() {
   if (MODE === "offline") wireOffline();
+  wireSearch();
   wireSetup();
   wireSettings();
   wireKeys();
@@ -766,6 +825,6 @@ async function main() {
 }
 
 main().catch((err) => {
-  console.error("unipegPFP: page failed", err);
+  console.error("upegRUN: page failed", err);
   showSetup("Something broke locally. Reload the extension from chrome://extensions.", true);
 });

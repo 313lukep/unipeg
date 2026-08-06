@@ -1,5 +1,5 @@
 /**
- * unipegPFP — Offline Unipeg · toolbar popup.
+ * upegRUN — Offline Unipeg · toolbar popup.
  * Lock in a piece, toggle the new tab takeover, see the best run, open the board.
  * Validation uses the bundled snapshot, so it is accurate with the network off.
  */
@@ -35,7 +35,7 @@ async function getUpeg() {
     try {
       upeg = await import("./lib/upeg.js");
     } catch (err) {
-      console.error("unipegPFP: renderer unavailable in popup", err);
+      console.error("upegRUN: renderer unavailable in popup", err);
       return null;
     }
   }
@@ -108,6 +108,6 @@ el("play").addEventListener("click", async () => {
 });
 
 init().catch((err) => {
-  console.error("unipegPFP: popup failed", err);
+  console.error("upegRUN: popup failed", err);
   say("Something broke locally. Reload the extension.", true);
 });

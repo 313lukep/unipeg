@@ -1,4 +1,4 @@
-/* unipegPFP — Offline Unipeg · shared page styles for offline.html + newtab.html.
+/* upegRUN — Offline Unipeg · shared page styles for offline.html + newtab.html.
    LIGHT-committed on purpose (owner's call): white paper, like Chrome's own
    offline page and the website's light mode. There is no theme toggle — the
    pages commit to light the way they previously committed to dark. Tokens are
@@ -119,20 +119,6 @@ canvas {
   margin: 0;
 }
 
-.display.num {
-  font-family: var(--mono);
-  font-weight: 700;
-  letter-spacing: -0.01em;
-  font-size: clamp(34px, 6.4vw, 64px);
-}
-
-.display .hash {
-  color: var(--pink);
-  font-size: 0.6em;
-  vertical-align: 0.42em;
-  margin-right: 0.04em;
-}
-
 .sub {
   color: var(--mute);
   margin: 12px 0 0;
@@ -159,6 +145,87 @@ canvas {
   align-items: center;
   gap: 12px;
   margin-top: 20px;
+}
+
+/* ── the new tab's search bar ──────────────────────────────────────────── */
+
+/* NEW TAB ONLY — offline.html does not ship this markup. It sits where the
+   giant "#185206" used to: a new tab is a place people type into, and a piece
+   number they already chose is not worth 64px of it. The number moved into the
+   line below, at reading size.
+
+   It is a plain GET form to google.com/search, so it works with page.js dead;
+   page.js only adds the empty-query guard and the offline state. */
+.search {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  max-width: 34rem;
+}
+
+.search input[type="search"] {
+  flex: 1;
+  min-width: 0;
+  appearance: none;
+  background: var(--paper);
+  border: 1px solid var(--mute);
+  border-radius: 999px;
+  caret-color: var(--pink);
+  padding: 12px 20px;
+  min-height: 48px;
+  /* 16px is the floor iOS stops zooming the viewport at, and this box is the
+     one thing on the page people type prose into. */
+  font-size: 16px;
+}
+
+.search input[type="search"]::placeholder {
+  color: var(--mute);
+}
+
+.search input[type="search"]:hover {
+  border-color: var(--ink);
+}
+
+.search input[type="search"]:focus-visible {
+  outline: 2px solid var(--pink);
+  outline-offset: 2px;
+  border-radius: 0;
+}
+
+.search input[type="search"]::-webkit-search-decoration,
+.search input[type="search"]::-webkit-search-cancel-button {
+  appearance: none;
+}
+
+.search .btn {
+  flex: none;
+  min-height: 48px;
+}
+
+/* Nothing to search with the network down — say so rather than 404 them. */
+.search[data-offline] input[type="search"] {
+  color: var(--mute);
+}
+
+.search[data-offline] .btn {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.sub .hash {
+  color: var(--pink);
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
 }
 
 /* ── controls ──────────────────────────────────────────────────────────── */
@@ -569,6 +636,22 @@ dialog h2 {
 
   .head {
     gap: 18px;
+  }
+
+  /* The plate already eats 120px of a narrow window — let the Search pill drop
+     to its own line rather than squeezing the field to nothing. Once the header
+     is two rows tall, centring floats the plate against nothing; top-align puts
+     it level with the field instead. */
+  .head {
+    align-items: flex-start;
+  }
+
+  .search {
+    flex-wrap: wrap;
+  }
+
+  .search input[type="search"] {
+    flex: 1 1 100%;
   }
 
   /* Same 340px floor — the runner is the same 84px tall on a phone as on a
