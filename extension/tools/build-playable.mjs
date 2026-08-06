@@ -103,25 +103,24 @@ const html = `<title>upegRUN Runner — play your Unipeg</title>
      the empty one collapses, which pushed the bar 61px right of centre. Same
      reasoning and the same structure as pages/page.css.
      Plate here: 96px canvas + 10px padding each side + 1px border each side. */
-  .ntbar { --plate-w: 118px; display: grid; grid-template-columns: var(--plate-w) minmax(0, 1fr) var(--plate-w); align-items: center; gap: 20px; }
+  .ntbar { --plate-w: 118px; display: grid; grid-template-columns: var(--plate-w) minmax(0, 1fr) var(--plate-w); align-items: center; column-gap: 16px; }
   @media (max-width: 860px) { .ntbar { grid-template-columns: auto minmax(0, 1fr); } }
-  .ntbody { min-width: 0; display: flex; flex-direction: column; gap: 10px; }
-  .ntsub { margin: 0; color: var(--mute); font-size: 13px; text-align: center; }
-  .ntsub b { color: var(--ink); }
-  .ntsub .hash { color: var(--pink); }
+  .ntbody { min-width: 0; }
   #ntPortrait { image-rendering: pixelated; border-radius: 8px; background: var(--paper); }
   .plate { flex: none; background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 10px; line-height: 0; }
-  .search { display: flex; align-items: center; gap: 10px; width: 100%; }
+  /* stretch, not center — the input's box is taller than the button's fixed
+     min-height, and mismatched pill heights read as a mistake. */
+  .search { display: flex; align-items: stretch; gap: 10px; width: 100%; }
   .search input[type="search"] {
-    flex: 1; min-width: 0; font: inherit; font-size: 16px;
+    flex: 1; min-width: 0; font: inherit; font-size: 17px;
     background: var(--paper); color: var(--ink); caret-color: var(--pink);
-    border: 1px solid var(--mute); border-radius: 999px; padding: 12px 20px; min-height: 48px;
+    border: 1px solid var(--mute); border-radius: 999px; padding: 16px 26px; min-height: 56px;
     appearance: none;
   }
   .search input[type="search"]::-webkit-search-decoration,
   .search input[type="search"]::-webkit-search-cancel-button { appearance: none; }
   .search input[type="search"]::placeholder { color: var(--mute); }
-  .search button { flex: none; min-height: 48px; }
+  .search button { flex: none; min-height: 56px; padding: 10px 26px; }
 
   /* Board height is set by the jump arc, exactly as pages/page.css sets it —
      keep the two in step. The runner is a fixed 84 CSS px tall, the ground sits
@@ -165,10 +164,8 @@ const html = `<title>upegRUN Runner — play your Unipeg</title>
                aria-label="Search Google" autocomplete="off" spellcheck="false" enterkeyhint="search" />
         <button type="submit">SEARCH</button>
       </form>
-      <p class="ntsub">
-        Peg <b><span class="hash">#</span><span id="pieceDigits">&mdash;</span></b>
-        &middot; best <b id="bestInline">0</b>.
-      </p>
+      <!-- Nothing else up here: the piece is on the plate beside the bar, and
+           the score bar under the board carries the number and the best. -->
     </div>
   </div>
 
@@ -244,12 +241,9 @@ function fitCanvas(canvas, w, h) {
   ctx.imageSmoothingEnabled = false;
 }
 
-// Best shows twice — in the header line and in the score bar — so both move
-// together or neither does.
+// The score bar under the board is the only place the best score is shown.
 function setBest(n) {
-  const s = String(n);
-  el("high").textContent = s;
-  el("bestInline").textContent = s;
+  el("high").textContent = String(n);
 }
 
 // One portrait on the page, and it lives in the header beside the search bar —
@@ -277,7 +271,6 @@ async function preview(id) {
   state.grid = gridFromSeed(seed);
   state.palette = paletteFromGrid(state.grid);
   drawPortrait(state.grid);
-  el("pieceDigits").textContent = String(id);
   el("ntbar").classList.remove("hidden");
   el("lockBtn").classList.remove("hidden");
   return true;

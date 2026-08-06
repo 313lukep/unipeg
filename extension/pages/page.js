@@ -256,9 +256,9 @@ function bootGame() {
 
 /* ── score ────────────────────────────────────────────────────────────── */
 
+/** The score bar under the board is the only place the best score is shown. */
 function paintHigh() {
   setText("best", String(state.high));
-  setText("bestInline", String(state.high));
 }
 
 let persistTimer = 0;
@@ -463,7 +463,8 @@ async function showPiece(id) {
 
   showOnly("play");
   drawPortrait(state.grid);
-  setText("pieceDigits", String(id));
+  // The new tab shows the piece and nothing about it — the plate is the label.
+  // `pieceChip` is the offline page's, beside its Retry button.
   setText("pieceChip", `#${id}`);
   paintHigh();
   setText("score", "0");

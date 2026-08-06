@@ -179,6 +179,10 @@ body[data-mode="newtab"] .head {
   display: grid;
   grid-template-columns: var(--plate-w) minmax(0, 1fr) var(--plate-w);
   align-items: center;
+  /* Tighter than the 28px the offline header uses: every pixel taken out of
+     the two gutters is a pixel the bar gets, and it is the only thing in the
+     row now. */
+  column-gap: 16px;
 }
 
 /* Under ~860px the balancing column costs more field than the centring buys —
@@ -193,7 +197,11 @@ body[data-mode="newtab"] .head {
 
 .search {
   display: flex;
-  align-items: center;
+  /* stretch, not center: an input's box is its padding plus whatever the font
+     metric makes of `line-height: normal`, so pinning both children to the same
+     min-height still left the field 60px and the button 56. Stretching lets the
+     taller one set the row and the other match it, whatever the font does. */
+  align-items: stretch;
   gap: 10px;
   width: 100%;
 }
@@ -206,11 +214,13 @@ body[data-mode="newtab"] .head {
   border: 1px solid var(--mute);
   border-radius: 999px;
   caret-color: var(--pink);
-  padding: 12px 20px;
-  min-height: 48px;
-  /* 16px is the floor iOS stops zooming the viewport at, and this box is the
-     one thing on the page people type prose into. */
-  font-size: 16px;
+  padding: 16px 26px;
+  /* 56px, up from 48. It is the one thing you interact with above the board and
+     the only thing left in the header, so it can afford to look like it. */
+  min-height: 56px;
+  /* 17px. Never below 16 — that is the floor iOS stops zooming the viewport at,
+     and this box is the one thing on the page people type prose into. */
+  font-size: 17px;
 }
 
 .search input[type="search"]::placeholder {
@@ -234,7 +244,8 @@ body[data-mode="newtab"] .head {
 
 .search .btn {
   flex: none;
-  min-height: 48px;
+  min-height: 56px;
+  padding: 10px 26px;
 }
 
 /* Nothing to search with the network down — say so rather than 404 them. */
@@ -245,19 +256,6 @@ body[data-mode="newtab"] .head {
 .search[data-offline] .btn {
   opacity: 0.55;
   cursor: not-allowed;
-}
-
-.sub .hash {
-  color: var(--pink);
-}
-
-/* Centred under the centred bar, and no longer capped at 50ch — it is one
-   short line, not a paragraph. */
-.searchsub {
-  max-width: none;
-  text-align: center;
-  font-size: 13px;
-  margin-top: 10px;
 }
 
 /* ── the controls, under the board ─────────────────────────────────────── */
@@ -469,7 +467,10 @@ input[type="number"]::-webkit-inner-spin-button {
    1800px wide on the real pages and the peak taken, plus slack. The peaks land
    at 580px — one notch above the small-screen breakpoint, where the copy has
    wrapped but the tighter mobile spacing has not kicked in yet.
-     new tab   356px wide / 391px small     offline   438px wide / 478px small */
+     new tab   356px wide / 378px small     offline   438px wide / 478px small
+   The new tab's header is governed by the plate (122px), not by its contents,
+   so dropping the peg/best line under the bar did not shrink it — the bar grew
+   into the room instead. */
 body[data-mode="newtab"] {
   --reserve: 372px;
 }
@@ -750,7 +751,7 @@ dialog h2 {
      the header stacks and the copy wraps, so both modes cost more. The .stage
      rule itself is unchanged — it reads --reserve either way. */
   body[data-mode="newtab"] {
-    --reserve: 406px;
+    --reserve: 396px;
   }
 
   body[data-mode="offline"] {
