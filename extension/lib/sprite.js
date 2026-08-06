@@ -40,10 +40,10 @@ export const DEFAULT_SCALE = 4;
  * THE CROUCH — A NECK PIVOT, NOT A SHRINK.
  *
  * The unicorn ducks the way a horse ducks: it drops its head and hunches its
- * shoulders. Everything above the back line — head, horn, mane, wing tips —
- * is translated DOWN by whole cells and the head additionally leans forward by
- * whole cells; the torso and all four legs are left exactly where they are, so
- * the feet never leave the ground line. Nothing is scaled, nothing is rotated
+ * shoulders. Everything above the back line — head, horn, mane, wing tips — is
+ * translated DOWN by whole cells, and the head leans forward with it wherever
+ * the art leaves room; the torso and all four legs are left exactly where they
+ * are, so the feet never leave the ground line. Nothing is scaled, nothing is rotated
  * by a fractional angle, no cell is resampled: the crouched unicorn is drawn at
  * the SAME integer scale as the standing one, from the same 24x24 cells.
  *
@@ -54,7 +54,15 @@ export const DEFAULT_SCALE = 4;
 /** Whole cells the front end folds down by. The whole crouch is this number. */
 export const DUCK_DROP = 4;
 
-/** Whole cells the head juts forward by, on top of the drop. */
+/**
+ * Whole cells the head juts forward by, on top of the drop — when it can.
+ *
+ * Measured across all 6,913 pieces: every one of them already puts its muzzle
+ * on the right-hand edge of its own content box, so leaning would make the
+ * crouch a WIDER target than the stand, and `safeLean` declines it every time.
+ * The parameter stays because the fold is written as geometry rather than as a
+ * special case, and a piece that ever left room would use it.
+ */
 export const DUCK_LEAN = 1;
 
 /**
@@ -109,9 +117,10 @@ export function topLine(keyed) {
  *               from which half of the box the topline peaks in, so a mirrored
  *               piece would lean the right way without a second code path.
  *
- * With no metadata to re-render (a bare grid handed straight in) the back line
- * falls back to the median of the whole silhouette's topline, which lands in
- * the same place for a horse-shaped thing and cannot be wrong by much.
+ * With no metadata to re-render (a bare grid handed straight in) it reads the
+ * same numbers off the full silhouette instead. That puts the cut a little
+ * lower — a wing tip counts as topline — which folds more of the piece than it
+ * strictly needs to, and is still a crouch.
  */
 export function neckPivot(grid, keyed, box, drop = DUCK_DROP) {
   const silhouette = topLine(keyed);
@@ -145,11 +154,14 @@ export function neckPivot(grid, keyed, box, drop = DUCK_DROP) {
   const facing = peak >= box.x + box.w / 2 ? 1 : -1;
 
   // The neck's base: walk in from the facing edge while the topline is still
-  // above the back line. Those columns are head, crest and neck.
-  let split = facing > 0 ? box.x + box.w - 1 : box.x;
+  // above the back line. Those columns are head, crest and neck. Columns the
+  // bare body does not reach (a horn tip hanging over the edge) are stepped
+  // over rather than treated as the end of the neck.
+  let split = facing > 0 ? GRID_SIZE : -1; // "no head columns" until one is found
   for (let i = 0; i < box.w; i++) {
     const x = facing > 0 ? box.x + box.w - 1 - i : box.x + i;
-    if (line[x] < 0 || line[x] >= backLine) break;
+    if (line[x] < 0) continue;
+    if (line[x] >= backLine) break;
     split = x;
   }
   return { backLine, split, facing };
@@ -204,7 +216,7 @@ export function duckCells(keyed, pivot, options = {}) {
  * with their muzzle, so this quietly resolves to a straight-down fold — which
  * still reads as head-down, and keeps the hitbox honest.
  */
-export function safeLean(keyed, box, pivot, drop = DUCK_DROP, lean = DUCK_LEAN) {
+export function safeLean(keyed, box, pivot, lean = DUCK_LEAN) {
   if (lean <= 0) return 0;
   const edge = pivot.facing > 0 ? box.x + box.w - 1 : box.x;
   for (let y = 0; y < pivot.backLine; y++) {
@@ -243,7 +255,11 @@ export function safeLean(keyed, box, pivot, drop = DUCK_DROP, lean = DUCK_LEAN) 
  */
 export const FLYER_PIECE_ID = 39;
 export const FLYER_SEED = 1927359419702180163628542380460131660334337n;
-export const FLYER_WING_CYCLE = [6, 12];
+// Owner's pick: the broad, sharp swept wing. Variants 1 and 2 are the same
+// large triangular wing with a hard leading edge (pterodactyl-like); the tip
+// position differs just enough between them to read as one wing beating
+// rather than two different creatures.
+export const FLYER_WING_CYCLE = [1, 2];
 export const FLYER_INK = "#0b0b0d";
 export const FLYER_EYE = "#f7f7f8";
 /** Flyer scale relative to the runner's. Integer at both page scales (4, 8). */
@@ -503,7 +519,7 @@ export function buildRunFrames(grid, options = {}) {
   // is exactly the picture: shorter by `drop` cells, feet on the same row.
   const drop = Math.max(0, Math.round(options.duckDrop ?? DUCK_DROP));
   const pivot = neckPivot(grid, keyedFrames[0], box, drop);
-  const lean = safeLean(keyedFrames[0], box, pivot, drop, options.duckLean ?? DUCK_LEAN);
+  const lean = safeLean(keyedFrames[0], box, pivot, options.duckLean ?? DUCK_LEAN);
   const ducked = keyedFrames.map((keyed) => duckCells(keyed, pivot, { drop, lean }));
   const duckBox = runCycleBounds(ducked) || box;
   frames.duck = withMeta(

@@ -3,7 +3,8 @@ import { beforeAll, describe, expect, it } from "vitest";
 import { UPEG_BACKGROUND_COLORS, UPEG_COLORS, gridFromSeed } from "../upeg.js";
 import {
   DEFAULT_SCALE,
-  DUCK_RATIO,
+  DUCK_DROP,
+  DUCK_LEAN,
   FLYER_EYE,
   FLYER_INK,
   FLYER_PIECE_ID,
@@ -16,12 +17,15 @@ import {
   buildRunFrames,
   contentBounds,
   drawGrid,
-  duckScaleFor,
+  duckCells,
   flyerScaleFor,
   keyOutBackground,
   mirrorCells,
+  neckPivot,
   runCycleBounds,
+  safeLean,
   shadowCells,
+  topLine,
   unionBounds,
 } from "../sprite.js";
 import fixtures from "../../../src/lib/upeg/__tests__/fixtures.json";
@@ -245,53 +249,183 @@ describe("sprite.js — frame canvases", () => {
   });
 });
 
-describe("sprite.js — the crouch", () => {
-  it("only ever picks a smaller INTEGER scale", () => {
-    for (let s = 1; s <= 16; s++) {
-      const d = duckScaleFor(s);
-      expect(Number.isInteger(d)).toBe(true);
-      expect(d).toBeGreaterThanOrEqual(1);
-      expect(d).toBeLessThanOrEqual(s);
-    }
-    // The two scales the page actually ships (dpr 1 and dpr >= 2).
-    expect(duckScaleFor(4)).toBe(3);
-    expect(duckScaleFor(8)).toBe(6);
-    expect(DUCK_RATIO).toBe(3 / 4);
+/* ------------------------------------------------------------- the crouch */
+
+type Cells = (string | null)[][];
+const seedsFor = (ids: number[]) => ids.map((id) => BigInt((alive as Record<string, string>)[String(id)]));
+/** A spread across the collection, plus the ends. */
+const ALL_IDS = Object.keys(alive as Record<string, string>).map(Number).sort((a, b) => a - b);
+const SPREAD = seedsFor([0, 1, 900, 1900, 2900, 3900, 4900, 5900, ALL_IDS.length - 1].map((i) => ALL_IDS[i]));
+
+function duckedFor(seed: bigint, drop = DUCK_DROP, lean = DUCK_LEAN) {
+  const grid = gridFromSeed(seed);
+  const keyed = buildRunCycleGrids(grid).map(keyOutBackground) as Cells[];
+  const box = runCycleBounds(keyed)!;
+  const pivot = neckPivot(grid, keyed[0], box, drop);
+  const safe = safeLean(keyed[0], box, pivot, lean);
+  const cells = keyed.map((k) => duckCells(k, pivot, { drop, lean: safe }));
+  return { grid, keyed, box, pivot, lean: safe, cells, duckBox: runCycleBounds(cells)! };
+}
+
+describe("sprite.js — the crouch is a neck pivot", () => {
+  it("reads the topline off a column at a time", () => {
+    const cells: Cells = [
+      [null, "#fff", null],
+      ["#fff", "#fff", null],
+      [null, "#fff", null],
+    ];
+    expect(topLine(cells)).toEqual([1, 0, -1]);
   });
 
-  it("rides along on the run frames, three quarters the height, same box", () => {
+  it("derives the back line from the piece's own body, not from a magic row", () => {
+    for (const seed of SPREAD) {
+      const { grid, box, pivot } = duckedFor(seed);
+      // Above the back line there is head, horn and mane; below it, torso.
+      expect(pivot.backLine).toBeGreaterThanOrEqual(box.y + DUCK_DROP);
+      expect(pivot.backLine).toBeLessThanOrEqual(box.y + Math.floor(box.h * 0.7));
+      // The art faces right, so the neck's base is right of the box's middle
+      // and the fold leans that way.
+      expect(pivot.facing).toBe(1);
+      expect(pivot.split).toBeGreaterThan(box.x);
+      expect(pivot.split).toBeLessThan(box.x + box.w);
+      expect(grid.meta.body).toBeGreaterThan(0);
+    }
+  });
+
+  it("is exactly DUCK_DROP cells shorter, with the feet on the same row", () => {
+    for (const seed of SPREAD) {
+      const { box, duckBox } = duckedFor(seed);
+      expect(duckBox.h).toBe(box.h - DUCK_DROP);
+      expect(duckBox.y).toBe(box.y + DUCK_DROP);
+      // The one thing a duck may never do: leave the ground.
+      expect(duckBox.y + duckBox.h).toBe(box.y + box.h);
+      // ...and it is never a wider target than the stand.
+      expect(duckBox.w).toBeLessThanOrEqual(box.w);
+      expect(duckBox.x).toBeGreaterThanOrEqual(box.x);
+    }
+  });
+
+  it("moves the head down rather than shrinking it: cell counts are preserved", () => {
+    for (const seed of SPREAD) {
+      const { keyed, cells, pivot } = duckedFor(seed);
+      const painted = (c: Cells) => c.flat().filter((v) => v !== null).length;
+      const overwritten = painted(keyed[0]) - painted(cells[0]);
+      // Cells only vanish by landing on top of body cells — never by being
+      // resampled away, and never more than the fold could possibly cover.
+      expect(overwritten).toBeGreaterThanOrEqual(0);
+      expect(painted(cells[0])).toBeGreaterThan(painted(keyed[0]) * 0.6);
+      // Everything at or below the back line is untouched: the legs still run.
+      for (let y = pivot.backLine + DUCK_DROP; y < 24; y++) {
+        expect([y, cells[0][y]]).toEqual([y, keyed[0][y]]);
+      }
+    }
+  });
+
+  it("keeps the crouch a 2-frame cycle whose legs still animate", () => {
+    for (const seed of SPREAD) {
+      const { cells } = duckedFor(seed);
+      expect(cells).toHaveLength(2);
+      expect(JSON.stringify(cells[0])).not.toBe(JSON.stringify(cells[1]));
+    }
+  });
+
+  it("holds every promise for every piece in the collection", () => {
+    // 6,913 pieces, every hair/horn/wing/accessory variant the contract ships.
+    let leaned = 0;
+    for (const id of ALL_IDS) {
+      const seed = BigInt((alive as Record<string, string>)[String(id)]);
+      const grid = gridFromSeed(seed);
+      const keyed = buildRunCycleGrids(grid).map(keyOutBackground) as Cells[];
+      const box = runCycleBounds(keyed)!;
+      const pivot = neckPivot(grid, keyed[0], box, DUCK_DROP);
+      const lean = safeLean(keyed[0], box, pivot, DUCK_LEAN);
+      if (lean > 0) leaned++;
+      const duckBox = runCycleBounds(keyed.map((k) => duckCells(k, pivot, { drop: DUCK_DROP, lean })))!;
+      if (duckBox.h !== box.h - DUCK_DROP || duckBox.y + duckBox.h !== box.y + box.h) {
+        throw new Error(`#${id}: stand ${JSON.stringify(box)} duck ${JSON.stringify(duckBox)}`);
+      }
+    }
+    // Every piece's muzzle already reaches the edge of its own box, so the
+    // forward lean is always the one that would widen the hitbox — and is
+    // always declined. The fold is what does the work.
+    expect(leaned).toBe(0);
+  });
+
+  it("can lean the head forward, and declines when that would widen the box", () => {
+    // A hand-built horse: a flat back at row 12, a torso under it, and a neck
+    // and head rising on the right — the shape every piece in the collection
+    // has, with none of its decoration.
+    const cells: Cells = Array.from({ length: 24 }, () => new Array(24).fill(null));
+    for (let y = 12; y <= 20; y++) for (let x = 4; x <= 14; x++) cells[y][x] = "#111111";
+    for (let y = 6; y <= 11; y++) for (let x = 12; x <= 14; x++) cells[y][x] = "#222222";
+    const box = contentBounds(cells)!;
+    const pivot = neckPivot(null as never, cells, box, 3);
+    expect(pivot).toMatchObject({ facing: 1, backLine: 12, split: 12 });
+
+    // The head owns the box's right edge, so the lean is declined — exactly
+    // what happens for all 6,913 real pieces.
+    expect(safeLean(cells, box, pivot, 1)).toBe(0);
+
+    // The mechanism itself still works when a caller insists on it.
+    const leaned = duckCells(cells, pivot, { drop: 3, lean: 1 });
+    expect(leaned[9][15]).toBe("#222222"); // head cell, down 3 and forward 1
+    expect(leaned[9][12]).toBeNull(); // ...and gone from where it was
+    expect(leaned.every((row) => row.length === 24)).toBe(true);
+
+    const straight = duckCells(cells, pivot, { drop: 3, lean: 0 });
+    const moved = contentBounds(straight)!;
+    expect(moved.y).toBe(box.y + 3);
+    expect(moved.h).toBe(box.h - 3);
+    expect(moved.w).toBe(box.w);
+    expect(straight[9][14]).toBe("#222222");
+  });
+
+  it("rides along on the run frames at the SAME integer scale", () => {
     const frames = buildRunFrames(gridFromSeed(SEED), { scale: 8 }) as unknown as FakeCanvas[] & {
-      box: { w: number; h: number };
-      duck: FakeCanvas[] & { cellPx: number; box: { w: number; h: number } };
+      cellPx: number;
+      box: { w: number; h: number; y: number };
+      duck: FakeCanvas[] & { cellPx: number; box: { w: number; h: number; y: number } };
     };
     const duck = frames.duck;
     expect(duck).toHaveLength(frames.length);
-    expect(duck.cellPx).toBe(6);
-    expect(duck.box).toEqual(frames.box);
-    // Exactly 3/4 the standing size — no fractional squash anywhere.
-    expect(duck[0].height).toBe(frames[0].height * 0.75);
-    expect(duck[0].width).toBe(frames[0].width * 0.75);
-    expect(duck[0].height).toBe(frames.box.h * 6);
+    // Same cell size as the stand — the crouch is not a smaller unicorn.
+    expect(duck.cellPx).toBe(frames.cellPx);
+    expect(duck.cellPx).toBe(8);
+    expect(duck.box.h).toBe(frames.box.h - DUCK_DROP);
+    expect(duck.box.w).toBe(frames.box.w);
+    expect(duck[0].height).toBe(duck.box.h * 8);
+    expect(duck[0].width).toBe(frames[0].width);
+    expect(duck[0].height).toBeLessThan(frames[0].height);
     expect(duck[0].smoothing).toBe(false);
     // Still the piece, still animated.
     expect(duck[0].pixels.some((p) => p !== null)).toBe(true);
     expect(JSON.stringify(duck[0].pixels)).not.toBe(JSON.stringify(duck[1].pixels));
   });
+
+  it("honours a caller who wants a shallower or deeper fold", () => {
+    for (const drop of [2, 3, 4]) {
+      const frames = buildRunFrames(gridFromSeed(SEED), { scale: 4, duckDrop: drop }) as unknown as {
+        box: { h: number };
+        duck: { box: { h: number } };
+      };
+      expect(frames.duck.box.h).toBe(frames.box.h - drop);
+    }
+  });
 });
 
 describe("sprite.js — the flyer", () => {
-  it("is built from real alive piece #39, wings 6 and horn 5", () => {
+  it("is built from real alive piece #39, with the broad swept wing", () => {
     expect(String(FLYER_SEED)).toBe(String((alive as Record<string, string>)[String(FLYER_PIECE_ID)]));
     const [raised] = buildFlyerGrids();
-    expect(raised.meta.wings).toBe(6);
+    expect(raised.meta.wings).toBe(1);
     expect(raised.meta.horn).toBe(5);
-    expect(FLYER_WING_CYCLE).toEqual([6, 12]);
+    expect(FLYER_WING_CYCLE).toEqual([1, 2]);
   });
 
-  it("flaps between wings 6 and wings 12 and changes nothing else", () => {
+  it("flaps between wings 1 and wings 2 and changes nothing else", () => {
     const [a, b] = buildFlyerGrids();
-    expect(a.meta.wings).toBe(6);
-    expect(b.meta.wings).toBe(12);
+    expect(a.meta.wings).toBe(1);
+    expect(b.meta.wings).toBe(2);
     const { wings: _aw, ...restA } = a.meta;
     const { wings: _bw, ...restB } = b.meta;
     expect(restA).toEqual(restB);

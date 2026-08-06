@@ -8,9 +8,11 @@
  *
  * The simulation is split so the interesting parts are pure and unit-tested:
  * `stepRunner`, `speedAt`, `scoreFromDistance`, `shrinkRect`, `rectsOverlap`,
- * `collides`, `spawnGap`, `flyerLanes` and `runnerBox` take numbers and return
- * numbers. `startGame` is the thin impure shell that owns the canvas, the input
- * and the loop.
+ * `collides`, `spawnGap`, `flyerLanes`, `runnerBox`, the jump arc (`jumpReach`,
+ * `jumpArc`, `jumpGroups`), the spawn table (`patternIsClearable`,
+ * `pickPattern`, `patternGap`) and the contrast pass (`readable`,
+ * `readableFacets`) all take numbers and return numbers. `startGame` is the
+ * thin impure shell that owns the canvas, the input and the loop.
  */
 
 /**
@@ -21,30 +23,50 @@
  * time 2v/g = 0.86 s. The apex is what has to fit inside a short board, and the
  * hang time is what carries the runner over a three-wide cluster — so the arc
  * is tuned by moving BOTH numbers, never just the velocity.
+ *
+ * THE RAMP — why it opens this slowly.
+ *
+ * The board is roughly 8 H wide, the runner stands 12% in from the left and is
+ * about 1 H wide itself, so a mark spawning at the right edge has ~6 H of clear
+ * board to cross before it reaches the runner's nose:
+ *
+ *   base 2.8 H/s  ->  ~2.0 s of reaction time on the very first obstacle
+ *   (the old 4.2 gave ~1.5 s, which is where "too fast too early" came from —
+ *    measured on the real board, not modelled: see the autopilot test)
+ *
+ * At 0.10 H/s per second of survival the ramp is a slope you notice but never
+ * trip over: the old opening speed arrives at t = 14 s, twenty seconds in it is
+ * still only 4.8 H/s (~150 points, a warm-up), and the 10 H/s cap is 72 seconds
+ * of clean running away — a long run, not an opening. Everything downstream is
+ * derived from these two numbers rather than pinned to them: obstacle patterns
+ * unlock on speed, the gap between spawns eases with sqrt(speed), and both are
+ * re-checked against the real jump arc before anything is allowed to spawn.
  */
 export const DEFAULTS = {
   gravity: 14.5, // H per second squared
   jumpVelocity: 6.2, // H per second, upward — apex ~1.33 H, hang ~0.86 s
-  baseSpeed: 4.2, // H per second
-  maxSpeed: 10, // H per second
-  accel: 0.22, // H per second, per second of survival
+  baseSpeed: 2.8, // H per second — a calm walk-on, see THE RAMP above
+  maxSpeed: 10, // H per second — reached at t = 72 s, not before
+  accel: 0.1, // H per second, per second of survival
   hitboxShrink: 0.15, // forgiving: 15% off the runner's box
+  clearMargin: 1.25, // a group must fit the jump arc with 25% to spare
   scoreUnit: 0.5, // H of travel per point
   frameHz: 11, // run-cycle frames per second at base speed
   gapMin: 1.6, // seconds between obstacles, at the current speed
   gapMax: 2.8,
-  gapFloor: 1.0, // never closer than this, however fast it gets
+  gapFloor: 1.25, // never closer than this, however fast it gets
   coyoteTime: 0.08, // seconds of grace after leaving the ground
-  duckRatio: 3 / 4, // duck sprite height / run sprite height (sprite.js: 3/4)
+  duckDrop: 4, // cells the crouch folds down by (sprite.js DUCK_DROP)
   duckGravity: 3.5, // gravity multiplier while ducking in mid-air (fast fall)
   flyerScore: 450, // no flyers before this score — Chrome's dino uses 450 too
   flyerChance: 0.32, // share of spawns that fly, once they are unlocked
   flyerSpeedMult: 1.05, // flyers close slightly faster than the ground scrolls
   flyerHz: 4, // wingbeats per second — deliberately slower than the gallop
-  laneLow: 0.8, // H above the ground: must be ducked
+  laneLow: 0.66, // H above the ground: must be ducked — sits low, skimming the head
   laneMid: 0.36, // must be jumped
   laneHigh: 1.1, // clears a standing runner — visibly, not by a hair
   laneMargin: 0.04, // H of slack held on every lane boundary
+  facetContrast: 2, // minimum contrast an obstacle holds against the board
 };
 
 export const HIGH_SCORE_KEY = "upegpfp.highScore";
@@ -146,9 +168,11 @@ export function makeRng(seed = 1) {
 /* ------------------------------------------------------- runner geometry */
 
 /**
- * The runner's box in world pixels. Ducking swaps in the smaller sprite, which
- * is rendered at a smaller INTEGER scale (sprite.js) and stands on the same
- * ground line — so the hitbox shrinks exactly as much as the picture does.
+ * The runner's box in world pixels. Ducking swaps in the crouched sprite, whose
+ * head, neck and wing tips have been folded down a whole number of cells by
+ * sprite.js — same scale, same feet, same ground line, `duckDrop` cells
+ * shorter. The hitbox is measured from those folded cells, so the box is
+ * exactly the picture: a duck is genuinely lower, never merely smaller.
  */
 export function runnerBox({ x, groundY, spriteW, spriteH, duckW, duckH, y = 0, ducking = false }) {
   const w = ducking ? duckW : spriteW;
@@ -163,6 +187,37 @@ export function runnerBox({ x, groundY, spriteW, spriteH, duckW, duckH, y = 0, d
 export function jumpReach(spriteH, cfg = DEFAULTS) {
   const apex = ((cfg.jumpVelocity * cfg.jumpVelocity) / (2 * cfg.gravity)) * spriteH;
   return apex + (cfg.hitboxShrink / 2) * spriteH;
+}
+
+/**
+ * The jump arc, as the three numbers every spawn decision is made from.
+ *
+ * `hang(t)`   — seconds in the air, takeoff to landing.
+ * `window(h)` — seconds the shrunk hitbox spends ABOVE something `h` px tall.
+ *               Zero when `h` is at or past `jumpReach`, which is the same
+ *               statement as "this cannot be jumped at all".
+ * `rise(h)`   — seconds from takeoff until the hitbox first clears `h` px.
+ *               How much runway a jump has to be started with.
+ *
+ * Multiply a window by the scroll speed and you get the ground covered while
+ * airborne — the only quantity that decides whether an obstacle group is
+ * clearable, and the reason wide groups have to wait for a fast world.
+ */
+export function jumpArc(spriteH, cfg = DEFAULTS) {
+  const v0 = cfg.jumpVelocity * spriteH;
+  const g = cfg.gravity * spriteH;
+  const reach = jumpReach(spriteH, cfg);
+  const root = (height) => {
+    if (height >= reach) return 0;
+    const need = Math.max(0, height - (cfg.hitboxShrink / 2) * spriteH);
+    return Math.sqrt(Math.max(0, v0 * v0 - 2 * g * need));
+  };
+  return {
+    hang: (2 * v0) / g,
+    reach,
+    window: (height) => (2 * root(height)) / g,
+    rise: (height) => (height >= reach ? Infinity : (v0 - root(height)) / g),
+  };
 }
 
 const clamp = (v, lo, hi) => Math.min(Math.max(v, lo), hi);
@@ -332,37 +387,233 @@ export function clusterShape(shape, count, gap = 1) {
   return shapeFromRows(shape.rows.map((row) => new Array(n).fill(row).join(pad)));
 }
 
+/**
+ * The same mark drawn narrow and tall: the small mark's own width, stretched
+ * along the axis it is already stretched on. It reads as a spire rather than a
+ * second size of diamond, and because the jump clears 1.4 H it is a *timing*
+ * obstacle, not a wall — the thing you jump slightly later than you expect.
+ */
+export const ETH_TALL_ROWS = [
+  "...M...",
+  "..LMD..",
+  "..LMD..",
+  "..LMD..",
+  ".LLMDD.",
+  ".LLMDD.",
+  "LLLMDDD",
+  ".LLMDD.",
+  ".LLMDD.",
+  "L.....D",
+  "LLLMDDD",
+  ".LLMDD.",
+  ".LLMDD.",
+  "..LMD..",
+  "..LMD..",
+  "..LMD..",
+  "...M...",
+];
+
 export const ETH_SMALL = shapeFromRows(ETH_SMALL_ROWS);
 export const ETH_LARGE = shapeFromRows(ETH_LARGE_ROWS);
+export const ETH_TALL = shapeFromRows(ETH_TALL_ROWS);
+
+/* --------------------------------------------------------- spawn patterns */
 
 /**
- * The spawn table. `minSpeed` is a multiple of the base speed, copying the
- * dino's rule that the widest groups only unlock once the world is moving fast
- * enough for one jump to carry across them. Every entry was checked against
- * the jump arc: time spent above the mark's height, times the scroll speed,
- * has to exceed the group's width plus the runner's own.
+ * THE PATTERN SET.
+ *
+ * One mark, over and over, at a metronome's spacing, is the thing that made the
+ * old board boring. A spawn is now a *pattern*: one or more marks with a shape,
+ * an offset, and a say in how long the pause after it is.
+ *
+ *   at    — cells from the pattern's own origin. Fixed geometry: parts an `at`
+ *           apart are one obstacle to be jumped in one arc, at every speed.
+ *   after — SECONDS from the pattern's origin. Elastic geometry: the second
+ *           mark is always the same amount of *time* behind the first, so a
+ *           pattern meant to be two separate decisions stays two separate
+ *           decisions at 2.8 H/s and at 10 H/s alike.
+ *   gapAfter — multiplies the pause that follows. The breather is nothing but
+ *           a small mark with a long silence behind it, and that silence is
+ *           what makes the busy patterns feel busy.
+ *
+ * `minRatio` (a multiple of the base speed) is a *pacing* preference — it is
+ * what keeps the opening to easy singles. It is NOT the safety rule: every
+ * pattern is re-checked against the real jump arc and the real sprite before it
+ * is allowed to spawn (`patternIsClearable`), because a short piece jumps lower
+ * than a tall one while the marks stay the same size.
  */
-export const OBSTACLE_SHAPES = [
-  { shape: ETH_SMALL, minSpeed: 1 },
-  { shape: ETH_LARGE, minSpeed: 1 },
-  { shape: clusterShape(ETH_SMALL, 2), minSpeed: 1 },
-  { shape: clusterShape(ETH_SMALL, 3), minSpeed: 1.15 },
-  { shape: clusterShape(ETH_LARGE, 2), minSpeed: 1.3 },
-  { shape: clusterShape(ETH_LARGE, 3), minSpeed: 1.6 },
+export const SPAWN_PATTERNS = [
+  // Openers — one decision, plenty of air.
+  { name: "small", minRatio: 1, gapAfter: 1, weight: [6, 2], parts: [{ shape: ETH_SMALL, at: 0 }] },
+  { name: "tall", minRatio: 1, gapAfter: 1, weight: [3, 2], parts: [{ shape: ETH_TALL, at: 0 }] },
+  { name: "breather", minRatio: 1, gapAfter: 1.9, weight: [3, 1.5], parts: [{ shape: ETH_SMALL, at: 0 }] },
+  // Two decisions in quick succession: land, then go again.
+  {
+    name: "one-two",
+    minRatio: 1,
+    gapAfter: 1.15,
+    weight: [3, 3.5],
+    parts: [
+      { shape: ETH_SMALL, at: 0 },
+      { shape: ETH_SMALL, at: 0, after: 1.4 },
+    ],
+  },
+  // One decision, wider — the cluster the dino builds out of cacti.
+  {
+    // Three beats with landing room — jump, land, jump, land, jump. The owner
+    // asked for this over parked stacks: each mark is its own decision.
+    name: "three-beat",
+    minRatio: 1.05,
+    gapAfter: 1.2,
+    weight: [2, 3.5],
+    parts: [
+      { shape: ETH_SMALL, at: 0 },
+      { shape: ETH_SMALL, at: 0, after: 1.4 },
+      { shape: ETH_SMALL, at: 0, after: 1.4 },
+    ],
+  },
+  {
+    // Spaced mixed sizes — the second beat is taller, so the same rhythm
+    // needs a bigger commitment.
+    name: "step-up",
+    minRatio: 1.2,
+    gapAfter: 1.15,
+    weight: [1.5, 3],
+    parts: [
+      { shape: ETH_SMALL, at: 0 },
+      { shape: ETH_LARGE, at: 0, after: 1.5 },
+    ],
+  },
+  { name: "twin", minRatio: 1.1, gapAfter: 1, weight: [1, 1.6], parts: [{ shape: clusterShape(ETH_SMALL, 2), at: 0 }] },
+  { name: "large", minRatio: 1.25, gapAfter: 1, weight: [1, 3], parts: [{ shape: ETH_LARGE, at: 0 }] },
+  { name: "trio", minRatio: 1.3, gapAfter: 1.1, weight: [0.2, 1], parts: [{ shape: clusterShape(ETH_SMALL, 3), at: 0 }] },
+  // A small mark tucked against a large one: one arc, but it starts sooner
+  // than the eye expects because the tall half is at the back.
+  {
+    name: "pair",
+    minRatio: 1.6,
+    gapAfter: 1.1,
+    weight: [0.5, 2.5],
+    parts: [
+      { shape: ETH_SMALL, at: 0 },
+      { shape: ETH_LARGE, at: ETH_SMALL.w + 1 },
+    ],
+  },
+  { name: "wall", minRatio: 1.75, gapAfter: 1.15, weight: [0.2, 1], parts: [{ shape: clusterShape(ETH_LARGE, 2), at: 0 }] },
+  { name: "range", minRatio: 2.25, gapAfter: 1.2, weight: [0.15, 0.8], parts: [{ shape: clusterShape(ETH_LARGE, 3), at: 0 }] },
 ];
+
+/**
+ * Where a pattern's parts land, in world px relative to the pattern's origin,
+ * at this scroll speed. `speedPx` is px per second; `unit` is the cell size.
+ */
+export function patternParts(pattern, speedPx, unit) {
+  return pattern.parts.map((part) => ({
+    shape: part.shape,
+    x: (part.at || 0) * unit + (part.after || 0) * speedPx,
+    w: part.shape.w * unit,
+    h: part.shape.h * unit,
+  }));
+}
+
+/**
+ * Split placed parts into the groups that have to be cleared in ONE jump.
+ *
+ * Two parts belong to the same group when the runner could not possibly land
+ * between them: coming down from the first takes `hang` seconds, and the second
+ * has to be jumped `rise` seconds before it arrives, so anything closer than
+ * that much travel is one obstacle wearing two hats. Deriving it rather than
+ * declaring it is what lets `after` be written in seconds and still mean the
+ * same thing at every speed.
+ */
+export function jumpGroups(parts, speedPx, spriteH, runnerW, cfg = DEFAULTS) {
+  const arc = jumpArc(spriteH, cfg);
+  const groups = [];
+  for (const part of parts) {
+    const open = groups[groups.length - 1];
+    if (open) {
+      const separation = part.x - (open.x + open.w);
+      const landing = (arc.hang + arc.rise(part.h) - arc.rise(open.h)) * speedPx + runnerW - open.w;
+      if (separation < landing) {
+        open.w = Math.max(open.w, part.x + part.w - open.x);
+        open.h = Math.max(open.h, part.h);
+        continue;
+      }
+    }
+    groups.push({ x: part.x, w: part.w, h: part.h });
+  }
+  return groups;
+}
+
+/** The runner's hitbox width in px — the thing every clearance is measured against. */
+export function runnerWidth(spriteW, cfg = DEFAULTS) {
+  return spriteW * (1 - cfg.hitboxShrink);
+}
+
+/**
+ * Can this pattern be jumped at this speed, by this piece?
+ *
+ * The whole safety argument, in one function: for every group, the ground
+ * covered while the hitbox is above it must exceed the group's width plus the
+ * runner's own, with `clearMargin` to spare. A group taller than `jumpReach`
+ * fails immediately — its window is zero.
+ */
+export function patternIsClearable(pattern, speed, dims, cfg = DEFAULTS) {
+  const { spriteH, spriteW, unit } = dims;
+  const speedPx = speed * spriteH;
+  const runnerW = runnerWidth(spriteW, cfg);
+  const arc = jumpArc(spriteH, cfg);
+  const groups = jumpGroups(patternParts(pattern, speedPx, unit), speedPx, spriteH, runnerW, cfg);
+  return groups.every((g) => arc.window(g.h) * speedPx >= (g.w + runnerW) * cfg.clearMargin);
+}
+
+/**
+ * How heavily a pattern is favoured right now. Early weights hold at the base
+ * speed, late weights at the cap, and it slides linearly between them: the
+ * opening is nearly all singles and breathers, the endgame is nearly all
+ * clusters, and neither ever becomes the only thing you see.
+ */
+export function patternWeight(pattern, speed, cfg = DEFAULTS) {
+  const span = Math.max(1e-6, cfg.maxSpeed - cfg.baseSpeed);
+  const t = Math.min(Math.max((speed - cfg.baseSpeed) / span, 0), 1);
+  const [early, late] = pattern.weight;
+  return early + (late - early) * t;
+}
+
+/** Patterns the current speed has unlocked AND the jump arc can still answer. */
+export function usablePatterns(speed, dims, cfg = DEFAULTS) {
+  const unlocked = SPAWN_PATTERNS.filter(
+    (p) => speed >= p.minRatio * cfg.baseSpeed && patternIsClearable(p, speed, dims, cfg),
+  );
+  return unlocked.length ? unlocked : [SPAWN_PATTERNS[0]];
+}
+
+/**
+ * Pick the next pattern. Pure given `rand` in [0,1).
+ *
+ * `last` is the name of the pattern that just spawned; it is struck out of the
+ * table, so the board can never show the same thing twice running. (If it is
+ * somehow the only thing available — a speed where nothing else is clearable —
+ * the no-repeat rule yields rather than deadlock the spawner.)
+ */
+export function pickPattern(rand, speed, dims, last = null, cfg = DEFAULTS) {
+  const table = usablePatterns(speed, dims, cfg);
+  const pool = table.filter((p) => p.name !== last);
+  const use = pool.length ? pool : table;
+  const weights = use.map((p) => Math.max(0, patternWeight(p, speed, cfg)));
+  const total = weights.reduce((a, b) => a + b, 0);
+  if (!(total > 0)) return use[0];
+  let roll = Math.min(Math.max(rand, 0), 0.999999) * total;
+  for (let i = 0; i < use.length; i++) {
+    roll -= weights[i];
+    if (roll < 0) return use[i];
+  }
+  return use[use.length - 1];
+}
 
 const isHex = (v) => typeof v === "string" && /^#[0-9a-fA-F]{3,8}$/.test(v);
 
 const PINK = "#FF4DA1";
-
-/** Rough perceived luminance, 0..255. Only used to order facets. */
-function luminance(hex) {
-  const s = hex.replace("#", "");
-  const v = s.length === 3 ? s.split("").map((c) => c + c).join("") : s.slice(0, 6);
-  const n = parseInt(v, 16);
-  if (!Number.isFinite(n)) return 0;
-  return 0.2126 * ((n >> 16) & 0xff) + 0.7152 * ((n >> 8) & 0xff) + 0.0722 * (n & 0xff);
-}
 
 /**
  * Three facet colours for one mark, sampled from the piece's own palette:
@@ -377,7 +628,7 @@ export function facetColours(palette, rand = 0) {
   const start = Math.floor(Math.min(Math.max(rand, 0), 0.999) * cs.length);
   const picked = [];
   for (let i = 0; i < Math.min(3, cs.length); i++) picked.push(cs[(start + i) % cs.length]);
-  picked.sort((a, b) => luminance(a) - luminance(b));
+  picked.sort((a, b) => relLuminance(a) - relLuminance(b));
   return {
     D: picked[0],
     M: picked[Math.floor((picked.length - 1) / 2)],
@@ -385,12 +636,105 @@ export function facetColours(palette, rand = 0) {
   };
 }
 
-/** Pick a mark + its facet colours for the next obstacle. Pure given `rng`. */
-export function pickObstacle(rng, palette, speedRatio = 1) {
-  const usable = OBSTACLE_SHAPES.filter((o) => speedRatio >= o.minSpeed);
-  const table = usable.length ? usable : [OBSTACLE_SHAPES[0]];
-  const shape = table[Math.min(Math.floor(rng() * table.length), table.length - 1)].shape;
-  return { shape, colours: facetColours(palette, rng()) };
+/* ------------------------------------------------------ colour + contrast */
+
+/** sRGB relative luminance, 0..1. */
+export function relLuminance(hex) {
+  const s = String(hex || "").replace("#", "");
+  const v = s.length === 3 ? s.split("").map((c) => c + c).join("") : s.slice(0, 6);
+  const n = parseInt(v, 16);
+  if (!Number.isFinite(n)) return 0;
+  const lin = (c) => {
+    const u = c / 255;
+    return u <= 0.03928 ? u / 12.92 : Math.pow((u + 0.055) / 1.055, 2.4);
+  };
+  return 0.2126 * lin((n >> 16) & 0xff) + 0.7152 * lin((n >> 8) & 0xff) + 0.0722 * lin(n & 0xff);
+}
+
+/** WCAG contrast ratio between two hex colours, 1..21. */
+export function contrastRatio(a, b) {
+  const la = relLuminance(a);
+  const lb = relLuminance(b);
+  return (Math.max(la, lb) + 0.05) / (Math.min(la, lb) + 0.05);
+}
+
+function channels(hex) {
+  const s = String(hex || "").replace("#", "");
+  const v = s.length === 3 ? s.split("").map((c) => c + c).join("") : s.slice(0, 6);
+  const n = parseInt(v, 16);
+  return Number.isFinite(n) ? [(n >> 16) & 0xff, (n >> 8) & 0xff, n & 0xff] : [0, 0, 0];
+}
+
+const hex2 = (n) => Math.round(Math.min(Math.max(n, 0), 255)).toString(16).padStart(2, "0");
+
+/** Blend `hex` toward `target` by `k` (0 = unchanged, 1 = target). */
+export function mixHex(hex, target, k) {
+  const a = channels(hex);
+  const b = channels(target);
+  const t = Math.min(Math.max(k, 0), 1);
+  return "#" + a.map((v, i) => hex2(v + (b[i] - v) * t)).join("");
+}
+
+/**
+ * The same colour, pushed until it can actually be seen on `board`.
+ *
+ * THE BOARD MAY BE WHITE. Every colour the game paints — the ground, the
+ * specks, the banner, and the piece's own colours on the obstacles — is passed
+ * through here first, so nothing is ever asked to be pale-on-pale. The push is
+ * a straight blend toward black on a light board and toward white on a dark
+ * one, which keeps the hue and only spends what it has to; if even the extreme
+ * cannot make the ratio, the extreme is what you get.
+ */
+export function readable(hex, board, min = 3) {
+  if (!isHex(hex)) return relLuminance(board) > 0.5 ? "#000000" : "#ffffff";
+  if (contrastRatio(hex, board) >= min) return hex;
+  const target = relLuminance(board) > 0.5 ? "#000000" : "#ffffff";
+  for (let i = 1; i <= 10; i++) {
+    const shifted = mixHex(hex, target, i / 10);
+    if (contrastRatio(shifted, board) >= min) return shifted;
+  }
+  return target;
+}
+
+/** The three facets of one mark, each guaranteed visible against the board. */
+export function readableFacets(facets, board, min = DEFAULTS.facetContrast) {
+  return {
+    L: readable(facets.L, board, min),
+    M: readable(facets.M, board, min),
+    D: readable(facets.D, board, min),
+  };
+}
+
+/* --------------------------------------------------------------- spawning */
+
+/**
+ * How long a pattern itself occupies, in seconds: from its origin to the back
+ * edge of its last mark. A three-wide cluster is half a second of board at the
+ * base speed, and a pattern with an elastic part is longer still.
+ */
+export function patternSpan(pattern, speedPx, unit) {
+  if (!pattern || !pattern.parts) return 0;
+  return Math.max(
+    ...pattern.parts.map(
+      (p) => (p.after || 0) + (((p.at || 0) + p.shape.w) * unit) / Math.max(speedPx, 1e-6),
+    ),
+  );
+}
+
+/**
+ * Seconds until the next spawn, after `pattern`.
+ *
+ * The gap is measured from the BACK of the pattern, not from its origin — a
+ * three-wide cluster or a two-beat pattern would otherwise eat its own runway
+ * and hand the player an unanswerable follow-up. On top of that the pattern's
+ * `gapAfter` stretches the pause (or, for a busy one, never shortens it past
+ * the floor), so a breather really is a breather and a cluster is always
+ * followed by room to recover.
+ */
+export function patternGap(rand, speed, pattern, cfg = DEFAULTS, dims = null) {
+  const scale = pattern && Number.isFinite(pattern.gapAfter) ? pattern.gapAfter : 1;
+  const span = dims ? patternSpan(pattern, speed * dims.spriteH, dims.unit) : 0;
+  return span + Math.max(cfg.gapFloor, spawnGap(rand, speed, cfg) * scale);
 }
 
 /* ------------------------------------------------------- persistence shim */
@@ -452,6 +796,9 @@ export async function saveHighScore(score) {
 
 const INK = "#F7F7F8";
 const MUTE = "#9C9CA6";
+const PAPER = "#0B0B0D";
+/** The flyer's near-black, kept in step with sprite.js FLYER_INK. */
+const SHADOW = "#0b0b0d";
 
 /**
  * `palette` may be the piece's colours as a plain array (the shared contract's
@@ -468,12 +815,28 @@ function pieceColours(palette) {
   return (Array.isArray(raw) ? raw : []).filter(isHex);
 }
 
+/**
+ * The board's own colours, resolved from whatever the page passed.
+ *
+ * THE BOARD IS NOT ASSUMED TO BE DARK. The page owns the theme and may flip it
+ * to white underneath us, so `board` is read from the page's surface token
+ * (`board`, then `card`, then `paper`) and every other colour is then measured
+ * against it: an `ink` that does not contrast with the surface it is drawn on
+ * is a page bug we correct rather than repeat. Nothing here can vanish.
+ *
+ * `bg` is deliberately NOT consulted — pages pass the *piece's* background
+ * colour under that name, which is the one colour the board must not be.
+ */
 function paletteTheme(palette) {
   const p = !Array.isArray(palette) && palette && typeof palette === "object" ? palette : {};
+  const board = isHex(p.board) ? p.board : isHex(p.card) ? p.card : isHex(p.paper) ? p.paper : PAPER;
+  const light = relLuminance(board) > 0.5;
   return {
-    ink: isHex(p.ink) ? p.ink : INK,
-    mute: isHex(p.mute) ? p.mute : MUTE,
-    accent: isHex(p.accent) ? p.accent : isHex(p.pink) ? p.pink : PINK,
+    board,
+    light,
+    ink: readable(isHex(p.ink) ? p.ink : light ? PAPER : INK, board, 7),
+    mute: readable(isHex(p.mute) ? p.mute : MUTE, board, 2.4),
+    accent: readable(isHex(p.accent) ? p.accent : isHex(p.pink) ? p.pink : PINK, board, 3),
   };
 }
 
@@ -524,11 +887,12 @@ export function startGame({
   const spriteW = sprite ? sprite[0].width : 96;
   const cellPx = Math.max(1, Math.round((frames && frames.cellPx) || spriteH / 24));
 
-  // The crouch. Real duck frames are rendered at a smaller integer scale by
-  // sprite.js; without them we blit the bottom slice of the standing frame,
-  // which is still a 1:1 pixel copy — never a fractional squash.
+  // The crouch. Real duck frames come from sprite.js with the head, neck and
+  // wing tips folded down whole cells — same scale, same feet, `duckDrop` cells
+  // shorter. Without them we blit the bottom slice of the standing frame, which
+  // is a 1:1 pixel copy of the same number of cells: never a fractional squash.
   const duck = pickFrames(duckFrames, frames && frames.duck);
-  const duckH = duck ? duck[0].height : Math.round(spriteH * cfg.duckRatio);
+  const duckH = duck ? duck[0].height : Math.max(cellPx, spriteH - cfg.duckDrop * cellPx);
   const duckW = duck ? duck[0].width : spriteW;
 
   // The flyer: an all-black winged Unipeg, same source, smaller integer scale.
@@ -573,6 +937,7 @@ export function startGame({
   let flapClock = 0;
   let flapIndex = 0;
   let specks = [];
+  let lastPattern = null;
   let rng = makeRng((Date.now() & 0xffff) || 7);
   let rafId = 0;
   let last = 0;
@@ -640,6 +1005,7 @@ export function startGame({
     flapClock = 0;
     flapIndex = 0;
     rng = makeRng((Date.now() & 0xffff) || 7);
+    lastPattern = null;
     nextGap = cfg.gapMin;
     emit();
   }
@@ -662,6 +1028,16 @@ export function startGame({
     ducking = Boolean(down);
   }
 
+  /** What the clearance maths needs to know about this piece, in px. */
+  function dims() {
+    return { spriteH, spriteW, unit: obstacleUnit };
+  }
+
+  /**
+   * One spawn: either a flyer, or a whole pattern of marks laid out at once.
+   * The pattern also decides the pause that follows it, and is remembered so
+   * the next spawn cannot repeat it.
+   */
   function spawn() {
     const speed = speedAt(elapsed, cfg);
     if (spawnsFlyer(rng(), score, cfg)) {
@@ -675,19 +1051,29 @@ export function startGame({
         h: flyerH,
         speed: cfg.flyerSpeedMult,
       });
-      return;
+      return null;
     }
-    const { shape, colours: facets } = pickObstacle(rng, colours, speed / cfg.baseSpeed);
-    obstacles.push({
-      kind: "eth",
-      x: width + obstacleUnit,
-      shape,
-      facets,
-      w: shape.w * obstacleUnit,
-      h: shape.h * obstacleUnit,
-      y: groundY - shape.h * obstacleUnit,
-      speed: 1,
-    });
+    const pattern = pickPattern(rng(), speed, dims(), lastPattern, cfg);
+    lastPattern = pattern.name;
+    const origin = width + obstacleUnit;
+    // One roll of the piece's palette per pattern, not per mark: a pattern is
+    // one thing the player reads, and two marks a cell apart in two different
+    // colour schemes read as noise.
+    const facets = readableFacets(facetColours(colours, rng()), theme.board, cfg.facetContrast);
+    for (const part of patternParts(pattern, speed * spriteH, obstacleUnit)) {
+      obstacles.push({
+        kind: "eth",
+        pattern: pattern.name,
+        x: origin + part.x,
+        shape: part.shape,
+        facets,
+        w: part.w,
+        h: part.h,
+        y: groundY - part.h,
+        speed: 1,
+      });
+    }
+    return pattern;
   }
 
   async function gameOver() {
@@ -730,8 +1116,8 @@ export function startGame({
     // Obstacles.
     nextGap -= dt;
     if (nextGap <= 0) {
-      spawn();
-      nextGap = spawnGap(rng(), speedAt(elapsed, cfg), cfg);
+      const pattern = spawn();
+      nextGap = patternGap(rng(), speedAt(elapsed, cfg), pattern, cfg, dims());
     }
     for (const o of obstacles) o.x -= speed * o.speed * dt;
     obstacles = obstacles.filter((o) => o.x + o.w > -obstacleUnit);
@@ -789,16 +1175,32 @@ export function startGame({
     });
   }
 
+  /**
+   * The board, drawn entirely from the palette the page handed over.
+   *
+   * Sky, ground line and ground texture are all the page's own tokens, run
+   * through `readable` against the board first — on a white board the ground is
+   * a dark hairline and the specks are grey, on a near-black one they are the
+   * light greys they always were. The only thing that stays put whatever the
+   * theme is the flyer: an all-black silhouette reads best on white, and it is
+   * the one shape in the game whose whole point is being a shadow.
+   */
   function draw() {
     ctx.clearRect(0, 0, width, height);
     ctx.imageSmoothingEnabled = false;
 
+    // Sky.
+    ctx.fillStyle = theme.board;
+    ctx.fillRect(0, 0, width, height);
+
     // Ground line + specks.
+    const rule = Math.max(1, Math.round(cellPx / 2));
     ctx.fillStyle = theme.mute;
-    ctx.globalAlpha = 0.45;
-    ctx.fillRect(0, groundY, width, Math.max(1, Math.round(cellPx / 2)));
+    ctx.globalAlpha = 0.8;
+    ctx.fillRect(0, groundY, width, rule);
+    ctx.globalAlpha = 0.55;
     for (const s of specks) {
-      ctx.fillRect(Math.round(s.x), Math.round(s.y), Math.round(s.w), Math.max(1, Math.round(cellPx / 2)));
+      ctx.fillRect(Math.round(s.x), Math.round(s.y), Math.round(s.w), rule);
     }
     ctx.globalAlpha = 1;
 
@@ -833,7 +1235,9 @@ export function startGame({
       ctx.drawImage(flyer[Math.min(flapIndex, flyer.length - 1)], x, Math.round(o.y));
       return;
     }
-    ctx.fillStyle = theme.ink;
+    // Black, on any board — the same near-black sprite.js paints the real
+    // silhouette with, so the stand-in reads as the same creature.
+    ctx.fillStyle = SHADOW;
     ctx.fillRect(x, Math.round(o.y), o.w, o.h);
   }
 
@@ -867,7 +1271,9 @@ export function startGame({
     ctx.font = `700 ${size}px "Space Mono", ui-monospace, SFMono-Regular, Menlo, monospace`;
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
-    ctx.fillStyle = state === "over" ? theme.accent : theme.mute;
+    // The overlay is the one thing a player reads rather than dodges: hold it
+    // to text contrast against the board, not decoration contrast.
+    ctx.fillStyle = state === "over" ? readable(theme.accent, theme.board, 4.5) : theme.ink;
     ctx.fillText(text, Math.round(width / 2), Math.round(groundY - spriteH * 1.6));
     if (state === "over") {
       ctx.fillStyle = theme.ink;
@@ -1017,12 +1423,16 @@ export function startGame({
         flyerH,
         flyerW,
         lanes: { ...lanes },
+        pattern: lastPattern,
+        board: theme.board,
         ducking,
         runner: { ...runner },
         runnerRect: runnerRect(),
         obstacles: obstacles.map((o) => ({
           kind: o.kind,
           lane: o.lane || null,
+          pattern: o.pattern || null,
+          facets: o.facets ? { ...o.facets } : null,
           x: o.x,
           y: o.y,
           w: o.w,

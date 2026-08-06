@@ -5,22 +5,36 @@ import {
   DEFAULTS,
   ETH_LARGE,
   ETH_SMALL,
+  ETH_TALL,
   FLYER_LANES,
   HIGH_SCORE_KEY,
-  OBSTACLE_SHAPES,
+  SPAWN_PATTERNS,
   clusterShape,
   collides,
+  contrastRatio,
   facetColours,
   flyerLanes,
   jump,
+  jumpArc,
+  jumpGroups,
   jumpReach,
   loadHighScore,
   makeRng,
   mayFly,
+  mixHex,
+  patternGap,
+  patternIsClearable,
+  patternParts,
+  patternSpan,
+  patternWeight,
   pickLane,
-  pickObstacle,
+  pickPattern,
+  readable,
+  readableFacets,
   rectsOverlap,
+  relLuminance,
   runnerBox,
+  runnerWidth,
   saveHighScore,
   scoreFromDistance,
   shapeFromRows,
@@ -30,8 +44,9 @@ import {
   speedAt,
   startGame,
   stepRunner,
+  usablePatterns,
 } from "../game.js";
-import { duckScaleFor, flyerScaleFor } from "../sprite.js";
+import { DUCK_DROP, flyerScaleFor } from "../sprite.js";
 
 const G = 2700; // px/s^2 — a round number keeps the closed-form checks readable
 const V = 840; // px/s
@@ -144,10 +159,40 @@ describe("game.js — speed ramp", () => {
     expect(speedAt(-5)).toBe(DEFAULTS.baseSpeed);
   });
 
-  it("reaches the cap in a sane amount of time", () => {
+  it("reaches the cap only after a long survival", () => {
     const capAt = (DEFAULTS.maxSpeed - DEFAULTS.baseSpeed) / DEFAULTS.accel;
-    expect(capAt).toBeGreaterThan(10);
+    expect(capAt).toBeGreaterThan(60); // a whole minute of clean running
+    expect(capAt).toBeLessThan(180); // ...but the cap is reachable, not mythical
     expect(speedAt(capAt)).toBeCloseTo(DEFAULTS.maxSpeed, 6);
+  });
+
+  it("opens calmly: real reaction time on the first obstacle", () => {
+    // The board is about 8 sprite-heights wide, the runner stands 12% in and is
+    // about 1 H wide, so a mark spawning at the right edge has ~6 H of clear
+    // board to cross. (The integration test below measures the real thing.)
+    const runway = 8 * (1 - 0.12) - 1;
+    expect(runway / speedAt(0)).toBeGreaterThan(2); // seconds to react, at t=0
+    // The whole opening is a warm-up: still slower at 20 s than the board used
+    // to START at, and less than half way to the cap.
+    expect(speedAt(20)).toBeLessThan(5);
+    expect(speedAt(20)).toBeLessThan(DEFAULTS.baseSpeed + (DEFAULTS.maxSpeed - DEFAULTS.baseSpeed) / 2);
+    // ...and it is a ramp, not a step: no second of it jumps by much.
+    for (let t = 0; t < 120; t++) {
+      expect(speedAt(t + 1) - speedAt(t)).toBeLessThanOrEqual(0.15);
+    }
+  });
+
+  it("keeps the ramp within the bounds the pacing was designed against", () => {
+    expect(DEFAULTS.baseSpeed).toBeGreaterThanOrEqual(2.6);
+    expect(DEFAULTS.baseSpeed).toBeLessThanOrEqual(3);
+    expect(DEFAULTS.accel).toBeGreaterThanOrEqual(0.08);
+    expect(DEFAULTS.accel).toBeLessThanOrEqual(0.12);
+    // Points come from distance, so the flyer threshold moves with the ramp:
+    // it should land somewhere in the first minute, not the first ten seconds.
+    const scoreAt = (t: number) =>
+      (DEFAULTS.baseSpeed * t + 0.5 * DEFAULTS.accel * t * t) / DEFAULTS.scoreUnit;
+    expect(scoreAt(20)).toBeLessThan(DEFAULTS.flyerScore);
+    expect(scoreAt(70)).toBeGreaterThan(DEFAULTS.flyerScore);
   });
 });
 
@@ -269,11 +314,14 @@ function filledCells(shape: { rows: string[] }) {
   return out;
 }
 
+/** Every shape any pattern can put on the board. */
+const PATTERN_SHAPES = SPAWN_PATTERNS.flatMap((p) => p.parts.map((part) => part.shape));
+
 describe("game.js — obstacles are Ethereum marks", () => {
-  const marks = [ETH_SMALL, ETH_LARGE];
+  const marks = [ETH_SMALL, ETH_LARGE, ETH_TALL];
 
   it("ships integer cell geometry inside its own box", () => {
-    for (const { shape } of OBSTACLE_SHAPES) {
+    for (const shape of PATTERN_SHAPES) {
       for (const r of [...shape.paint, ...shape.solid]) {
         for (const v of [r.x, r.y, r.w, r.h]) expect(Number.isInteger(v)).toBe(true);
         expect(r.x).toBeGreaterThanOrEqual(0);
@@ -286,8 +334,11 @@ describe("game.js — obstacles are Ethereum marks", () => {
 
   it("is an octahedron: taller than wide, symmetric, two triangles", () => {
     for (const mark of marks) {
-      expect(mark.h / mark.w).toBeGreaterThan(1.4); // the mark's own proportions
-      expect(mark.h / mark.w).toBeLessThan(1.9);
+      // The small and large marks keep the real mark's proportions; the tall
+      // one is the same silhouette drawn as a spire.
+      const ratio = mark.h / mark.w;
+      expect(ratio).toBeGreaterThan(1.4);
+      expect(ratio).toBeLessThan(mark === ETH_TALL ? 2.6 : 1.9);
       expect(mark.w % 2).toBe(1); // odd width — there is a centre seam
       for (const row of mark.rows) {
         expect([...row].reverse().join("").replace(/L/g, "?").replace(/D/g, "L").replace(/\?/g, "D")).toBe(row);
@@ -325,7 +376,7 @@ describe("game.js — obstacles are Ethereum marks", () => {
   });
 
   it("collides against the silhouette, not the bounding box", () => {
-    for (const { shape } of OBSTACLE_SHAPES) {
+    for (const shape of PATTERN_SHAPES) {
       const filled = filledCells(shape);
       const covered = new Set<string>();
       for (const r of shape.solid) {
@@ -345,7 +396,7 @@ describe("game.js — obstacles are Ethereum marks", () => {
   });
 
   it("paints exactly the cells it collides with", () => {
-    for (const { shape } of OBSTACLE_SHAPES) {
+    for (const shape of PATTERN_SHAPES) {
       const painted = new Set<string>();
       for (const r of shape.paint) {
         for (let x = r.x; x < r.x + r.w; x++) painted.add(`${x},${r.y}`);
@@ -376,62 +427,6 @@ describe("game.js — obstacles are Ethereum marks", () => {
     expect(clusterShape(ETH_SMALL, 1)).toBe(ETH_SMALL);
   });
 
-  it("offers singles and clusters of two and three, and nothing wider", () => {
-    const sizes = OBSTACLE_SHAPES.map(({ shape }) => {
-      for (const mark of marks) {
-        for (const n of [1, 2, 3]) {
-          if (shape.w === mark.w * n + (n - 1) && shape.h === mark.h) return n;
-        }
-      }
-      return 0;
-    });
-    expect(new Set(sizes)).toEqual(new Set([1, 2, 3]));
-    expect(sizes).not.toContain(0);
-    expect(sizes.filter((n) => n === 1).length).toBe(2); // one small, one large
-  });
-
-  it("holds the widest groups back until the world is moving fast enough", () => {
-    for (const { shape, minSpeed } of OBSTACLE_SHAPES) {
-      expect(minSpeed).toBeGreaterThanOrEqual(1);
-      expect(minSpeed * DEFAULTS.baseSpeed).toBeLessThanOrEqual(DEFAULTS.maxSpeed);
-      // Wider group => later unlock, never the other way round.
-      for (const other of OBSTACLE_SHAPES) {
-        if (other.shape.w > shape.w) expect(other.minSpeed).toBeGreaterThanOrEqual(minSpeed);
-      }
-    }
-    const atBase = OBSTACLE_SHAPES.filter((o) => o.minSpeed <= 1);
-    expect(atBase.length).toBeGreaterThanOrEqual(3);
-  });
-
-  it("is jumpable: every group fits inside the jump arc at its unlock speed", () => {
-    // The whole safety argument in one assertion. Time spent with the shrunk
-    // hitbox above the mark, times the scroll speed, must exceed the group's
-    // width plus the runner's own.
-    const H = 84; // a real sprite height: 21 cells at the page's 4x scale
-    const unit = 4; // ...and its cell size
-    const runnerW = 22 * unit * (1 - DEFAULTS.hitboxShrink);
-    const v0 = DEFAULTS.jumpVelocity * H;
-    const g = DEFAULTS.gravity * H;
-    for (const { shape, minSpeed } of OBSTACLE_SHAPES) {
-      const need = shape.h * unit - (DEFAULTS.hitboxShrink / 2) * H;
-      const disc = v0 * v0 - 2 * g * need;
-      expect(disc).toBeGreaterThan(0); // tall enough to clear at all
-      const window = (2 * Math.sqrt(disc)) / g; // seconds spent above it
-      const travel = window * minSpeed * DEFAULTS.baseSpeed * H;
-      expect(travel).toBeGreaterThan((shape.w * unit + runnerW) * 1.25);
-    }
-  });
-
-  it("paints marks only in the piece's own colours", () => {
-    const rng = makeRng(42);
-    const palette = ["#ac3232", "#5fcde4", "#e7d632"];
-    for (let i = 0; i < 200; i++) {
-      const { shape, colours } = pickObstacle(rng, palette, 2);
-      for (const c of [colours.L, colours.M, colours.D]) expect(palette).toContain(c);
-      expect(OBSTACLE_SHAPES.some((o) => o.shape === shape)).toBe(true);
-    }
-  });
-
   it("orders the facets light / seam / dark by luminance", () => {
     const { L, M, D } = facetColours(["#1e1e26", "#a0a0a0", "#f7f7f8"], 0);
     expect(L).toBe("#f7f7f8");
@@ -452,16 +447,6 @@ describe("game.js — obstacles are Ethereum marks", () => {
     expect(seen.size).toBeGreaterThan(1);
   });
 
-  it("never picks a group the current speed has not unlocked", () => {
-    const rng = makeRng(11);
-    for (let i = 0; i < 300; i++) {
-      const ratio = 1 + (i % 3) * 0.1; // 1.0, 1.1, 1.2
-      const { shape } = pickObstacle(rng, ["#ac3232"], ratio);
-      const entry = OBSTACLE_SHAPES.find((o) => o.shape === shape)!;
-      expect(entry.minSpeed).toBeLessThanOrEqual(ratio);
-    }
-  });
-
   it("compiles arbitrary rows without inventing cells", () => {
     const s = shapeFromRows(["LM.", ".MD"]);
     expect(s.w).toBe(3);
@@ -479,18 +464,293 @@ describe("game.js — obstacles are Ethereum marks", () => {
   });
 });
 
+/* --------------------------------------------------------- board contrast */
+
+describe("game.js — nothing vanishes into the board", () => {
+  const WHITE = "#ffffff";
+  const NEAR_BLACK = "#0b0b0d";
+
+  it("measures luminance and contrast the way the web does", () => {
+    expect(relLuminance("#ffffff")).toBeCloseTo(1, 6);
+    expect(relLuminance("#000000")).toBeCloseTo(0, 6);
+    expect(relLuminance("#fff")).toBeCloseTo(1, 6); // short hex too
+    expect(contrastRatio("#ffffff", "#000000")).toBeCloseTo(21, 6);
+    expect(contrastRatio("#ac3232", "#ac3232")).toBeCloseTo(1, 6);
+  });
+
+  it("blends toward a target without leaving the colour space", () => {
+    expect(mixHex("#000000", "#ffffff", 0)).toBe("#000000");
+    expect(mixHex("#000000", "#ffffff", 1)).toBe("#ffffff");
+    expect(mixHex("#000000", "#ffffff", 0.5)).toBe("#808080");
+    expect(mixHex("#ac3232", "#000000", 0.5)).toBe("#561919");
+  });
+
+  it("leaves a colour alone when it already reads", () => {
+    expect(readable("#ac3232", WHITE, 2)).toBe("#ac3232");
+    expect(readable("#f7f7f8", NEAR_BLACK, 2)).toBe("#f7f7f8");
+  });
+
+  it("pushes a pale colour dark enough to see on white — and keeps its hue", () => {
+    const before = "#fcf893"; // the palette's pale yellow: 1.1:1 on white
+    expect(contrastRatio(before, WHITE)).toBeLessThan(1.3);
+    const after = readable(before, WHITE, 2);
+    expect(contrastRatio(after, WHITE)).toBeGreaterThanOrEqual(2);
+    // Darkened, not replaced: still yellow-ish, red and green still lead blue.
+    const [r, g, b] = [1, 3, 5].map((i) => parseInt(after.slice(i, i + 2), 16));
+    expect(r).toBeGreaterThan(b);
+    expect(g).toBeGreaterThan(b);
+    expect(after).not.toBe("#000000");
+  });
+
+  it("pushes a near-black colour light enough to see on a dark board", () => {
+    const after = readable("#1e1e26", NEAR_BLACK, 2);
+    expect(contrastRatio(after, NEAR_BLACK)).toBeGreaterThanOrEqual(2);
+    expect(relLuminance(after)).toBeGreaterThan(relLuminance("#1e1e26"));
+  });
+
+  it("survives a colour it cannot rescue, and nonsense input", () => {
+    // Nothing can hold 21:1 against mid grey — take the extreme and move on.
+    expect(["#000000", "#ffffff"]).toContain(readable("#808080", "#808080", 21));
+    expect(readable("nope" as string, WHITE)).toBe("#000000");
+    expect(readable(undefined as unknown as string, NEAR_BLACK)).toBe("#ffffff");
+  });
+
+  it("keeps a mark's three facets visible on any board", () => {
+    for (const board of [WHITE, NEAR_BLACK, "#161619", "#cbbba0"]) {
+      const facets = readableFacets(facetColours(["#fcf893", "#f7f7f8", "#1e1e26"], 0), board, 2);
+      for (const c of [facets.L, facets.M, facets.D]) {
+        expect([board, c, contrastRatio(c, board) >= 2]).toEqual([board, c, true]);
+      }
+    }
+  });
+});
+
+/* ------------------------------------------------------------ the patterns */
+
+/**
+ * The geometries the game really sees: 4x and 8x cell scales, and the range of
+ * content-box heights the collection actually produces (18 to 23 cells). A
+ * short piece jumps lower than a tall one while the marks stay the same size,
+ * so every clearance claim has to survive the whole range.
+ */
+const GEOMETRIES = [4, 8].flatMap((scale) =>
+  [18, 19, 20, 21, 22, 23].map((cells) => ({
+    label: `${cells} cells @ ${scale}x`,
+    spriteH: cells * scale,
+    spriteW: 22 * scale,
+    unit: scale,
+  })),
+);
+
+const SPEEDS: number[] = [];
+for (let s = DEFAULTS.baseSpeed; s < DEFAULTS.maxSpeed; s += 0.2) SPEEDS.push(Number(s.toFixed(2)));
+SPEEDS.push(DEFAULTS.maxSpeed);
+
+describe("game.js — the pattern set", () => {
+  it("is varied: singles, a tall, a two-beat, tight clusters and a breather", () => {
+    const names = SPAWN_PATTERNS.map((p) => p.name);
+    expect(new Set(names).size).toBe(names.length);
+    expect(names.length).toBeGreaterThanOrEqual(8);
+    // singles of three different marks
+    const singles = SPAWN_PATTERNS.filter((p) => p.parts.length === 1);
+    expect(new Set(singles.map((p) => p.parts[0].shape)).size).toBeGreaterThanOrEqual(5);
+    // at least one pattern whose parts are separated in TIME, not cells
+    expect(SPAWN_PATTERNS.some((p) => p.parts.some((part) => (part.after || 0) > 0))).toBe(true);
+    // at least one pattern whose parts are separated in CELLS
+    expect(SPAWN_PATTERNS.some((p) => p.parts.length > 1 && p.parts.every((part) => !part.after))).toBe(true);
+    // ...and a breather: a spawn that is mostly silence.
+    expect(Math.max(...SPAWN_PATTERNS.map((p) => p.gapAfter))).toBeGreaterThanOrEqual(1.8);
+    // widths run from one mark to a three-wide wall
+    const widths = SPAWN_PATTERNS.map((p) => Math.max(...p.parts.map((x) => (x.at || 0) + x.shape.w)));
+    expect(Math.min(...widths)).toBe(ETH_SMALL.w);
+    expect(Math.max(...widths)).toBeGreaterThan(ETH_LARGE.w * 2);
+  });
+
+  it("unlocks the hard patterns later than the easy ones", () => {
+    // "Hard" is not "wide": a two-wide group of small marks is wider than one
+    // large mark and still easier, because the jump spends longer above it.
+    // The unlock order therefore follows the arc, not the ruler.
+    const geo = GEOMETRIES[3];
+    const hardness = (p: (typeof SPAWN_PATTERNS)[number]) =>
+      SPEEDS.find((s) => patternIsClearable(p, s, geo)) ?? Infinity;
+    for (const p of SPAWN_PATTERNS) {
+      expect(p.minRatio).toBeGreaterThanOrEqual(1);
+      expect(p.minRatio * DEFAULTS.baseSpeed).toBeLessThan(DEFAULTS.maxSpeed);
+      for (const other of SPAWN_PATTERNS) {
+        if (hardness(other) > hardness(p)) {
+          expect([other.name, p.name, other.minRatio >= p.minRatio]).toEqual([other.name, p.name, true]);
+        }
+      }
+    }
+    // ...and there is always more than one thing to see at the very start.
+    const openers = SPAWN_PATTERNS.filter((p) => p.minRatio <= 1);
+    expect(openers.length).toBeGreaterThanOrEqual(3);
+  });
+
+  it("is jumpable: every group the spawner can produce fits inside jumpReach", () => {
+    // THE SAFETY ARGUMENT. For every geometry, every speed, and every pattern
+    // the spawner is willing to use at that speed: the ground covered while the
+    // hitbox is above the group must beat the group's width plus the runner's,
+    // with the configured margin. `jumpReach` is the guard underneath it — a
+    // group taller than the reach has a zero-length window and can never pass.
+    for (const geo of GEOMETRIES) {
+      const arc = jumpArc(geo.spriteH);
+      const runnerW = runnerWidth(geo.spriteW);
+      expect(arc.reach).toBeCloseTo(jumpReach(geo.spriteH), 9);
+      for (const speed of SPEEDS) {
+        for (const pattern of usablePatterns(speed, geo)) {
+          const speedPx = speed * geo.spriteH;
+          const groups = jumpGroups(patternParts(pattern, speedPx, geo.unit), speedPx, geo.spriteH, runnerW);
+          for (const g of groups) {
+            const label = `${pattern.name} @ ${speed} H/s, ${geo.label}`;
+            expect([label, g.h < arc.reach]).toEqual([label, true]);
+            expect([label, arc.window(g.h) * speedPx >= (g.w + runnerW) * DEFAULTS.clearMargin]).toEqual([
+              label,
+              true,
+            ]);
+          }
+        }
+      }
+    }
+  });
+
+  it("never lets a pattern and the one behind it become one impossible jump", () => {
+    // The gap is measured from the BACK of a pattern, so the worst case is the
+    // shortest roll (rand = 0) after every pattern, followed by every other.
+    for (const geo of GEOMETRIES) {
+      const arc = jumpArc(geo.spriteH);
+      const runnerW = runnerWidth(geo.spriteW);
+      for (const speed of SPEEDS) {
+        const speedPx = speed * geo.spriteH;
+        const usable = usablePatterns(speed, geo);
+        for (const a of usable) {
+          const gap = patternGap(0, speed, a, DEFAULTS, geo);
+          for (const b of usable) {
+            const parts = [
+              ...patternParts(a, speedPx, geo.unit),
+              ...patternParts(b, speedPx, geo.unit).map((p) => ({ ...p, x: p.x + gap * speedPx })),
+            ];
+            const groups = jumpGroups(parts, speedPx, geo.spriteH, runnerW);
+            for (const g of groups) {
+              const label = `${a.name} -> ${b.name} @ ${speed} H/s, ${geo.label}`;
+              expect([label, arc.window(g.h) * speedPx >= (g.w + runnerW) * DEFAULTS.clearMargin]).toEqual([
+                label,
+                true,
+              ]);
+            }
+          }
+        }
+      }
+    }
+  });
+
+  it("keeps a two-beat pattern two beats at every speed", () => {
+    const twoBeat = SPAWN_PATTERNS.find((p) => p.parts.some((part) => (part.after || 0) > 0))!;
+    for (const geo of GEOMETRIES) {
+      const runnerW = runnerWidth(geo.spriteW);
+      for (const speed of SPEEDS) {
+        const speedPx = speed * geo.spriteH;
+        const groups = jumpGroups(patternParts(twoBeat, speedPx, geo.unit), speedPx, geo.spriteH, runnerW);
+        // Two separate decisions — never collapsing into one wide obstacle,
+        // however fast the board is moving.
+        expect([twoBeat.name, speed, geo.label, groups.length]).toEqual([twoBeat.name, speed, geo.label, 2]);
+      }
+    }
+  });
+
+  it("measures the pause from the back of the pattern, and lets a breather breathe", () => {
+    const geo = GEOMETRIES[3];
+    const speed = DEFAULTS.baseSpeed;
+    const small = SPAWN_PATTERNS.find((p) => p.name === "small")!;
+    const breather = SPAWN_PATTERNS.find((p) => p.name === "breather")!;
+    const range = SPAWN_PATTERNS.find((p) => p.name === "range")!;
+    // A breather is the same mark as a small single, with a longer silence.
+    expect(breather.parts[0].shape).toBe(small.parts[0].shape);
+    expect(patternGap(0.5, speed, breather, DEFAULTS, geo)).toBeGreaterThan(
+      patternGap(0.5, speed, small, DEFAULTS, geo) * 1.5,
+    );
+    // A wide pattern occupies real time, and the pause is added on top of it.
+    expect(patternSpan(range, speed * geo.spriteH, geo.unit)).toBeGreaterThan(
+      patternSpan(small, speed * geo.spriteH, geo.unit),
+    );
+    expect(patternGap(0, speed, range, DEFAULTS, geo)).toBeGreaterThan(
+      patternSpan(range, speed * geo.spriteH, geo.unit) + DEFAULTS.gapFloor - 1e-9,
+    );
+    // The floor still holds at the top speed.
+    for (const p of SPAWN_PATTERNS) {
+      expect(patternGap(0, DEFAULTS.maxSpeed, p, DEFAULTS, geo)).toBeGreaterThanOrEqual(DEFAULTS.gapFloor);
+    }
+  });
+
+  it("favours easy singles early and mixes clusters in late", () => {
+    const geo = GEOMETRIES[3];
+    const share = (speed: number) => {
+      const usable = usablePatterns(speed, geo);
+      const total = usable.reduce((a, p) => a + patternWeight(p, speed), 0);
+      const easy = usable
+        .filter((p) => p.parts.length === 1 && p.parts[0].shape === ETH_SMALL)
+        .reduce((a, p) => a + patternWeight(p, speed), 0);
+      return easy / total;
+    };
+    expect(share(DEFAULTS.baseSpeed)).toBeGreaterThan(0.55);
+    expect(share(DEFAULTS.maxSpeed)).toBeLessThan(0.25);
+    // The opening really is only openers.
+    expect(usablePatterns(DEFAULTS.baseSpeed, geo).every((p) => p.minRatio <= 1.1)).toBe(true);
+    // ...and the endgame really does have everything.
+    expect(usablePatterns(DEFAULTS.maxSpeed, GEOMETRIES[5]).length).toBe(SPAWN_PATTERNS.length);
+  });
+
+  it("never spawns the same pattern twice running", () => {
+    const geo = GEOMETRIES[3];
+    const rng = makeRng(7);
+    let last: string | null = null;
+    const seen = new Set<string>();
+    for (let i = 0; i < 4000; i++) {
+      const speed = DEFAULTS.baseSpeed + (i / 4000) * (DEFAULTS.maxSpeed - DEFAULTS.baseSpeed);
+      const pattern = pickPattern(rng(), speed, geo, last, DEFAULTS);
+      expect(pattern.name).not.toBe(last);
+      last = pattern.name;
+      seen.add(pattern.name);
+    }
+    // Over a full ramp the player sees the whole set.
+    expect(seen.size).toBe(SPAWN_PATTERNS.length);
+  });
+
+  it("only ever picks something the current speed has unlocked and can clear", () => {
+    for (const geo of [GEOMETRIES[0], GEOMETRIES[3], GEOMETRIES[11]]) {
+      const rng = makeRng(23);
+      for (const speed of SPEEDS) {
+        for (let i = 0; i < 40; i++) {
+          const pattern = pickPattern(rng(), speed, geo, null, DEFAULTS);
+          expect([pattern.name, speed >= pattern.minRatio * DEFAULTS.baseSpeed]).toEqual([pattern.name, true]);
+          expect([pattern.name, patternIsClearable(pattern, speed, geo)]).toEqual([pattern.name, true]);
+        }
+      }
+    }
+  });
+
+  it("degrades to the easiest single rather than spawning nothing", () => {
+    // A hypothetical piece so short that nothing is comfortably clearable.
+    const tiny = { spriteH: 8, spriteW: 200, unit: 8 };
+    const table = usablePatterns(DEFAULTS.baseSpeed, tiny);
+    expect(table).toEqual([SPAWN_PATTERNS[0]]);
+    expect(pickPattern(0.9, DEFAULTS.baseSpeed, tiny, SPAWN_PATTERNS[0].name).name).toBe(SPAWN_PATTERNS[0].name);
+  });
+});
+
 /* --------------------------------------------------------- the duck + flyer */
 
 /**
- * Real sprite dimensions: the run box is 22x21 cells and the flyer's is 22x22,
- * so at the page's scales these are the numbers the game actually sees.
+ * Real sprite dimensions: the run box is 22 cells wide and 18-23 tall, the
+ * flyer's is 22x22, and the crouch is the run box with the front end folded
+ * DUCK_DROP cells down — same width, same cell scale, same feet.
  */
 function dims(scale: number, runCells = 21) {
   return {
     spriteH: runCells * scale,
     spriteW: 22 * scale,
-    duckH: runCells * duckScaleFor(scale),
-    duckW: 22 * duckScaleFor(scale),
+    duckH: (runCells - DUCK_DROP) * scale,
+    duckW: 22 * scale,
     flyerH: 22 * flyerScaleFor(scale),
     flyerW: 22 * flyerScaleFor(scale),
   };
@@ -514,13 +774,26 @@ describe("game.js — duck geometry", () => {
     expect(boxAt(d, 0, true).y + d.duckH).toBe(GROUND);
   });
 
-  it("shrinks the hitbox by exactly as much as the sprite shrinks", () => {
+  it("is LOWER, not smaller: same width, a whole number of cells shorter", () => {
     const stand = boxAt(d, 0, false);
     const crouch = boxAt(d, 0, true);
-    expect(crouch.h / stand.h).toBeCloseTo(3 / 4, 12);
-    expect(crouch.w / stand.w).toBeCloseTo(3 / 4, 12);
-    expect(crouch.h).toBe(63);
-    expect(crouch.w).toBe(66);
+    expect(crouch.w).toBe(stand.w); // the crouch is not a shrunk unicorn
+    expect(stand.h - crouch.h).toBe(DUCK_DROP * 4); // 4 cells at the 4x scale
+    expect(crouch.h).toBe(68);
+    // Shorter by enough to matter, but still most of a unicorn.
+    expect(crouch.h / stand.h).toBeLessThan(0.9);
+    expect(crouch.h / stand.h).toBeGreaterThan(0.7);
+  });
+
+  it("stays a whole number of cells shorter at every scale and piece height", () => {
+    for (const scale of [3, 4, 5, 6, 7, 8]) {
+      for (const cells of [18, 19, 20, 21, 22, 23]) {
+        const g = dims(scale, cells);
+        expect((g.spriteH - g.duckH) / scale).toBe(DUCK_DROP);
+        expect(Number.isInteger(g.duckH / scale)).toBe(true);
+        expect(g.duckW).toBe(g.spriteW);
+      }
+    }
   });
 
   it("rises with the jump, crouched or not", () => {
@@ -727,16 +1000,28 @@ function fakeFrame(w: number, h: number) {
   return c;
 }
 
-/** The frame set sprite.js hands over: run frames carrying duck + flyer. */
-function frameSet(scale = 4) {
-  const d = duckScaleFor(scale);
+/**
+ * The frame set sprite.js hands over: run frames carrying duck + flyer. The
+ * duck is the same width and the same cell scale as the run frames, and
+ * DUCK_DROP cells shorter — the shape of a fold, not of a shrink.
+ */
+function frameSet(scale = 4, runCells = 21) {
   const f = flyerScaleFor(scale);
-  const frames = Object.assign([fakeFrame(22 * scale, 21 * scale), fakeFrame(22 * scale, 21 * scale)], {
-    cellPx: scale,
-    box: { x: 1, y: 2, w: 22, h: 21 },
-    duck: Object.assign([fakeFrame(22 * d, 21 * d), fakeFrame(22 * d, 21 * d)], { cellPx: d }),
-    flyer: Object.assign([fakeFrame(22 * f, 22 * f), fakeFrame(22 * f, 22 * f)], { cellPx: f }),
-  });
+  const frames = Object.assign(
+    [fakeFrame(22 * scale, runCells * scale), fakeFrame(22 * scale, runCells * scale)],
+    {
+      cellPx: scale,
+      box: { x: 1, y: 2, w: 22, h: runCells },
+      duck: Object.assign(
+        [
+          fakeFrame(22 * scale, (runCells - DUCK_DROP) * scale),
+          fakeFrame(22 * scale, (runCells - DUCK_DROP) * scale),
+        ],
+        { cellPx: scale, box: { x: 1, y: 2 + DUCK_DROP, w: 22, h: runCells - DUCK_DROP } },
+      ),
+      flyer: Object.assign([fakeFrame(22 * f, 22 * f), fakeFrame(22 * f, 22 * f)], { cellPx: f }),
+    },
+  );
   return frames;
 }
 
@@ -981,7 +1266,8 @@ describe("game.js — startGame shell", () => {
     expect(() => startGame({} as never)).toThrow(/canvas/);
   });
 
-  it("takes the piece colours from either a plain array or a theme object", () => {
+  /** Every colour the game actually asked the canvas for, over a short run. */
+  function paintedColours(palette: unknown, scale = 2) {
     const seen = new Set<string>();
     const { canvas } = stubCanvas();
     const ctx = canvas.getContext("2d") as unknown as { fillStyle: string };
@@ -997,23 +1283,81 @@ describe("game.js — startGame shell", () => {
       return 1;
     });
     vi.stubGlobal("cancelAnimationFrame", () => {});
-
     const game = startGame({
       canvas,
-      frames: frameSet(2),
-      // the shape the page actually sends: tokens + the piece's colours
-      palette: { ink: "#111111", mute: "#222222", accent: "#333333", piece: ["#ac3232"] },
-      scale: 2,
+      frames: frameSet(scale),
+      palette: palette as string[],
+      scale,
       reducedMotion: true,
     });
+    cb!(0); // the READY overlay
     game.restart();
-    for (let t = 16; t < 6000 && game.getState() === "running"; t += 16) cb!(t);
+    for (let t = 16; t < 8000 && game.getState() === "running"; t += 16) cb!(t);
+    cb!(8016); // ...and the CRASHED one, so the overlay text is covered too
+    const snap = game.getSnapshot();
+    game.stop();
+    return { seen, canvas, board: snap.board };
+  }
+
+  it("takes the piece colours from either a plain array or a theme object", () => {
+    const { seen, canvas } = paintedColours({
+      // the shape the page actually sends: tokens + the piece's colours
+      paper: "#0b0b0d",
+      card: "#161619",
+      ink: "#f7f7f8",
+      mute: "#9c9ca6",
+      accent: "#ff4da1",
+      piece: ["#ac3232"],
+    });
     expect(seen.has("#ac3232")).toBe(true); // marks wear the piece's colour
-    expect(seen.has("#222222")).toBe(true); // ground line uses the page's mute
+    expect(seen.has("#9c9ca6")).toBe(true); // ground line uses the page's mute
+    expect(seen.has("#161619")).toBe(true); // and the board is the page's card
     expect(seen.has("#FF4DA1")).toBe(false); // never falls back to raw pink
     // scale:2 is honoured instead of the ambient devicePixelRatio
     expect(canvas.width).toBe(1600);
-    game.stop();
+  });
+
+  it("draws a WHITE board from the palette, with nothing vanishing into it", () => {
+    // The page owns the theme and may hand us a light one. Everything the game
+    // paints has to survive that: sky, ground, texture, marks and overlay.
+    const light = {
+      paper: "#ffffff",
+      card: "#ffffff",
+      ink: "#0b0b0d",
+      mute: "#6b6b76",
+      accent: "#d6006b",
+      // a deliberately awful piece: near-white and pale-yellow pixels
+      piece: ["#fcf893", "#f7f7f8", "#cbdbfc"],
+    };
+    const { seen, board } = paintedColours(light);
+    expect(board).toBe("#ffffff");
+    expect(seen.has("#ffffff")).toBe(true); // the sky really is painted
+    for (const colour of seen) {
+      if (colour === "#ffffff") continue;
+      // Every other colour the game paints holds a real ratio against white.
+      expect([colour, contrastRatio(colour, "#ffffff") >= DEFAULTS.facetContrast]).toEqual([colour, true]);
+    }
+    // ...and the pale piece colours were pushed, not replaced: still warm, not
+    // black, and still three distinguishable facets.
+    expect(seen.has("#fcf893")).toBe(false);
+    const marks = [...seen].filter((c) => contrastRatio(c, "#0b0b0d") > 2 && c !== "#ffffff");
+    expect(marks.length).toBeGreaterThan(1);
+  });
+
+  it("keeps the dark board exactly as it was", () => {
+    const { seen, board } = paintedColours({
+      card: "#161619",
+      ink: "#f7f7f8",
+      mute: "#9c9ca6",
+      accent: "#ff4da1",
+      piece: ["#ac3232", "#5fcde4"],
+    });
+    expect(board).toBe("#161619");
+    // A normal piece on a near-black board is untouched — the contrast pass
+    // only ever spends what it has to.
+    expect(seen.has("#ac3232")).toBe(true);
+    expect(seen.has("#5fcde4")).toBe(true);
+    expect(seen.has("#f7f7f8")).toBe(true);
   });
 
   it("is losable: a player who never jumps crashes into the first mark", async () => {
@@ -1065,6 +1409,33 @@ describe("game.js — startGame shell", () => {
     game.stop();
   });
 
+  it("opens with real reaction time on the real board", () => {
+    // The claim the pacing rests on, measured rather than modelled: how many
+    // seconds a player has between first seeing the opening mark and being hit
+    // by it. 800x240 css at 1x is the size the page actually gives the canvas.
+    const { canvas } = stubCanvas();
+    let cb: FrameRequestCallback | null = null;
+    vi.stubGlobal("requestAnimationFrame", (fn: FrameRequestCallback) => {
+      cb = fn;
+      return 1;
+    });
+    vi.stubGlobal("cancelAnimationFrame", () => {});
+    const game = startGame({ canvas, frames: frameSet(), palette: ["#ac3232"], scale: 1, reducedMotion: true });
+    game.restart();
+    let runway = 0;
+    for (let t = 16; t < 6000; t += 16) {
+      cb!(t);
+      const snap = game.getSnapshot();
+      if (!snap.obstacles.length) continue;
+      const me = snap.runnerRect;
+      const first = snap.obstacles[0];
+      runway = (first.x - (me.x + me.w)) / (speedAt(snap.elapsed) * snap.spriteH);
+      break;
+    }
+    expect(runway).toBeGreaterThan(1.8); // seconds — a calm opening, not a reflex test
+    game.stop();
+  });
+
   it("stays winnable: an autopilot survives three minutes of the whole ramp", () => {
     const { canvas } = stubCanvas();
     let cb: FrameRequestCallback | null = null;
@@ -1077,13 +1448,28 @@ describe("game.js — startGame shell", () => {
     const game = startGame({ canvas, frames: frameSet(), palette: ["#ac3232"], reducedMotion: true });
     game.restart();
     const step = 1000 / 60;
+    const spawned: string[] = [];
+    const early = new Set<string>();
     for (let t = step; t < 180_000; t += step) {
       if (game.getState() !== "running") break;
       autopilot(game);
       cb!(t);
+      const snap = game.getSnapshot();
+      if (snap.pattern && snap.pattern !== spawned[spawned.length - 1]) spawned.push(snap.pattern);
+      if (snap.elapsed < 15 && snap.pattern) early.add(snap.pattern);
     }
     expect(game.getState()).toBe("running");
     expect(game.getScore()).toBeGreaterThan(2500);
+
+    // ...and the run it survived was a varied one: the whole pattern set turns
+    // up over three minutes, never twice in a row, and the first fifteen
+    // seconds stay on the openers.
+    expect(new Set(spawned).size).toBe(SPAWN_PATTERNS.length);
+    for (let i = 1; i < spawned.length; i++) expect(spawned[i]).not.toBe(spawned[i - 1]);
+    for (const name of early) {
+      const pattern = SPAWN_PATTERNS.find((p) => p.name === name)!;
+      expect([name, pattern.minRatio * DEFAULTS.baseSpeed <= speedAt(15)]).toEqual([name, true]);
+    }
     game.stop();
   });
 });
