@@ -88,18 +88,22 @@ const html = `<title>upegRUN Runner — play your Unipeg</title>
   button:hover { border-color: var(--pink); }
   :focus-visible { outline: 2px solid var(--pink); outline-offset: 2px; }
 
-  .preview { display: flex; align-items: center; gap: 14px; }
-  #portrait, #ntPortrait { image-rendering: pixelated; border-radius: 8px; background: var(--paper); }
-  .pieceNum { font-size: 26px; font-weight: 700; }
-  .pieceNum span { color: var(--pink); font-size: 0.6em; vertical-align: top; }
-
-  /* The new tab's header, mirrored: the piece on a plate and Google beside it.
-     Same markup shape as pages/newtab.html — plain GET form, no autofocus, so
-     the first space bar still jumps. It opens in a new tab here so this preview
-     page survives the click. */
-  .ntbar { display: flex; align-items: center; gap: 14px; }
+  /* THE HEADER IS pages/newtab.html's HEADER.
+     Piece on a plate, Google beside it, the peg number and best underneath —
+     the same order and the same parts as the real new tab. It sits directly
+     under the brand, above everything else, and it is NOT part of the board:
+     the search bar belongs to the piece you are displaying, not to the one
+     running past the Ethereum marks.
+     Plain GET form, no autofocus, so the first space bar still jumps. It opens
+     in a new tab here so this preview page survives the click. */
+  .ntbar { display: flex; align-items: center; gap: 20px; }
+  .ntbody { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 10px; }
+  .ntsub { margin: 0; color: var(--mute); font-size: 13px; }
+  .ntsub b { color: var(--ink); }
+  .ntsub .hash { color: var(--pink); }
+  #ntPortrait { image-rendering: pixelated; border-radius: 8px; background: var(--paper); }
   .plate { flex: none; background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 10px; line-height: 0; }
-  .search { display: flex; align-items: center; gap: 10px; flex: 1; min-width: 0; }
+  .search { display: flex; align-items: center; gap: 10px; }
   .search input[type="search"] {
     flex: 1; min-width: 0; font: inherit; font-size: 16px;
     background: var(--paper); color: var(--ink); caret-color: var(--pink);
@@ -143,6 +147,22 @@ const html = `<title>upegRUN Runner — play your Unipeg</title>
     <div class="eyebrow">extension preview</div>
   </header>
 
+  <div class="ntbar hidden" id="ntbar">
+    <div class="plate"><canvas id="ntPortrait" width="96" height="96" role="img" aria-label="Your Unipeg"></canvas></div>
+    <div class="ntbody">
+      <form class="search" id="searchForm" role="search" action="https://www.google.com/search"
+            method="get" target="_blank" rel="noopener">
+        <input type="search" id="searchInput" name="q" placeholder="Search Google"
+               aria-label="Search Google" autocomplete="off" spellcheck="false" enterkeyhint="search" />
+        <button type="submit">SEARCH</button>
+      </form>
+      <p class="ntsub">
+        Peg <b><span class="hash">#</span><span id="pieceDigits">&mdash;</span></b>
+        &middot; best <b id="bestInline">0</b>.
+      </p>
+    </div>
+  </div>
+
   <section class="panel" id="setup">
     <div class="row">
       <label for="pieceInput">Your peg</label>
@@ -150,29 +170,12 @@ const html = `<title>upegRUN Runner — play your Unipeg</title>
       <button id="loadBtn" class="pink">PREVIEW</button>
       <button id="randomBtn">RANDOM</button>
     </div>
-    <div class="preview hidden" id="previewRow">
-      <canvas id="portrait" width="96" height="96"></canvas>
-      <div>
-        <div class="pieceNum"><span>#</span><i id="previewNum" style="font-style:normal"></i></div>
-        <div class="hint">This is the piece that runs.</div>
-      </div>
-    </div>
     <div class="err" id="err"></div>
     <div class="row">
       <button id="lockBtn" class="primary hidden">LOCK IN &amp; PLAY</button>
     </div>
     <div class="hint" id="aliveLine"></div>
   </section>
-
-  <div class="ntbar hidden" id="ntbar">
-    <div class="plate"><canvas id="ntPortrait" width="96" height="96" role="img" aria-label="Your Unipeg"></canvas></div>
-    <form class="search" id="searchForm" role="search" action="https://www.google.com/search"
-          method="get" target="_blank" rel="noopener">
-      <input type="search" id="searchInput" name="q" placeholder="Search Google"
-             aria-label="Search Google" autocomplete="off" spellcheck="false" enterkeyhint="search" />
-      <button type="submit">SEARCH</button>
-    </form>
-  </div>
 
   <div id="stage" class="hidden"><canvas id="run"></canvas></div>
 
@@ -230,8 +233,18 @@ function fitCanvas(canvas, w, h) {
   ctx.imageSmoothingEnabled = false;
 }
 
-function drawPortrait(grid, id = "portrait") {
-  const c = el(id);
+// Best shows twice — in the header line and in the score bar — so both move
+// together or neither does.
+function setBest(n) {
+  const s = String(n);
+  el("high").textContent = s;
+  el("bestInline").textContent = s;
+}
+
+// One portrait on the page, and it lives in the header beside the search bar —
+// the piece you are DISPLAYING. The one on the board is a different animal.
+function drawPortrait(grid) {
+  const c = el("ntPortrait");
   const cell = 4 * deviceScale();
   c.width = 24 * cell; c.height = 24 * cell;
   c.style.width = c.style.height = 24 * 4 + "px";
@@ -244,7 +257,7 @@ async function preview(id) {
   el("err").textContent = "";
   const seed = await seedForId(id);
   if (seed === null) {
-    el("previewRow").classList.add("hidden");
+    el("ntbar").classList.add("hidden");
     el("lockBtn").classList.add("hidden");
     el("err").textContent = "#" + id + " isn't in the offline collection — try another number.";
     return false;
@@ -253,8 +266,8 @@ async function preview(id) {
   state.grid = gridFromSeed(seed);
   state.palette = paletteFromGrid(state.grid);
   drawPortrait(state.grid);
-  el("previewNum").textContent = String(id);
-  el("previewRow").classList.remove("hidden");
+  el("pieceDigits").textContent = String(id);
+  el("ntbar").classList.remove("hidden");
   el("lockBtn").classList.remove("hidden");
   return true;
 }
@@ -264,15 +277,13 @@ async function play() {
   el("stage").classList.remove("hidden");
   el("hud").classList.remove("hidden");
   el("controls").classList.remove("hidden");
-  el("ntbar").classList.remove("hidden");
   el("setup").classList.add("hidden");
-  drawPortrait(state.grid, "ntPortrait");
   const stage = el("stage");
   const canvas = el("run");
   // Content box, not border box — the 1px border would otherwise push a row of
   // the board out under overflow:hidden, including the top row the arc uses.
   fitCanvas(canvas, stage.clientWidth, stage.clientHeight);
-  el("high").textContent = String(await loadHighScore());
+  setBest(await loadHighScore());
   if (state.game) state.game.stop();
   state.game = startGame({
     canvas,
@@ -281,7 +292,7 @@ async function play() {
     // game.js signature: (score, { high, state })
     onScore: (score, meta) => {
       el("score").textContent = String(score);
-      if (meta && Number.isFinite(meta.high)) el("high").textContent = String(meta.high);
+      if (meta && Number.isFinite(meta.high)) setBest(meta.high);
     },
     scale: deviceScale(),
     reducedMotion: reduced,
@@ -298,12 +309,13 @@ el("randomBtn").onclick = async () => {
   preview(id);
 };
 el("lockBtn").onclick = () => play();
+// The header stays put — you are still displaying a piece, so the piece and the
+// search bar stay where they are. Only the board goes away.
 el("changeBtn").onclick = () => {
   if (state.game) { state.game.stop(); state.game = null; }
   el("stage").classList.add("hidden");
   el("hud").classList.add("hidden");
   el("controls").classList.add("hidden");
-  el("ntbar").classList.add("hidden");
   el("setup").classList.remove("hidden");
 };
 
