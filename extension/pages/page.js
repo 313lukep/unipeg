@@ -22,7 +22,12 @@ const KEY = {
   locked: "upegpfp.pieceLocked",
   high: "upegpfp.highScore",
   newtab: "upegpfp.newtabEnabled",
+  roster: "upegpfp.roster",
+  sceneMode: "upegpfp.sceneMode",
 };
+
+/** How many pieces may graze at once. Six fills three lanes twice over. */
+const ROSTER_MAX = 6;
 
 /** The project's mascot — a guaranteed-alive piece, offered during setup. */
 const MASCOT = 185206;
@@ -60,6 +65,11 @@ const state = {
   piecePalette: [],
   aliveCount: null,
   applyingOwnChange: false,
+  // The clearing
+  scene: null,
+  sceneMode: "auto",
+  roster: [],
+  sceneFrames: null,
   // Setup panel
   previewId: null,
   previewToken: 0,
@@ -133,7 +143,7 @@ function setText(id, text) {
 
 /* ── bundled renderer (no network, ever) ──────────────────────────────── */
 
-const lib = { upeg: null, sprite: null, game: null };
+const lib = { upeg: null, sprite: null, game: null, scene: null };
 
 async function loadLibs() {
   if (lib.upeg && lib.sprite) return true;
@@ -148,11 +158,17 @@ async function loadLibs() {
     console.error("upegRUN: renderer failed to load", err);
     return false;
   }
-  // The game is a nice-to-have; a broken game must not cost you the artwork.
+  // The game and the clearing are both nice-to-haves; neither may cost you the
+  // artwork if it fails to load.
   try {
     lib.game = await import("../lib/game.js");
   } catch (err) {
     console.error("upegRUN: game failed to load", err);
+  }
+  try {
+    lib.scene = await import("../lib/scene.js");
+  } catch (err) {
+    console.error("upegRUN: the clearing failed to load", err);
   }
   return true;
 }
@@ -254,6 +270,129 @@ function bootGame() {
   }
 }
 
+/* ── the clearing ─────────────────────────────────────────────────────── */
+
+/**
+ * The scene's palette drives the PAGE's palette, not the other way round.
+ *
+ * The chrome floats over the clearing, so if the sky goes to near-black at
+ * 6pm and the tokens do not follow, the search bar is black text on a black
+ * field. `scene.js` publishes `ink`/`paper` in both palettes for exactly this,
+ * and `--card`/`--line`/`--mute` are derived here so the pills read as glass
+ * sitting on the scene rather than as opaque cards punched through it.
+ */
+function applySceneTokens(pal) {
+  const root = document.documentElement.style;
+  const night = pal.name === "night";
+  root.setProperty("--ink", pal.ink);
+  root.setProperty("--paper", pal.paper);
+  root.setProperty("--mute", night ? "#A8A5B4" : "#5A5763");
+  root.setProperty("--card", night ? "rgba(20,20,28,0.72)" : "rgba(255,255,255,0.78)");
+  root.setProperty("--line", night ? "rgba(247,247,248,0.16)" : "rgba(11,11,13,0.12)");
+  root.setProperty("--pink", night ? "#FF4DA1" : "#C4005F");
+  document.documentElement.style.colorScheme = night ? "dark" : "light";
+}
+
+const MODE_LABEL = { auto: "Auto", day: "Day", night: "Night" };
+const MODE_NEXT = { auto: "day", day: "night", night: "auto" };
+
+function currentPalette() {
+  return lib.scene.paletteFor(state.sceneMode, new Date().getHours());
+}
+
+function paintModeButton() {
+  const btn = el("modeBtn");
+  if (!btn || !lib.scene) return;
+  const resolved = lib.scene.resolveMode(state.sceneMode, new Date().getHours());
+  btn.textContent = state.sceneMode === "auto" ? `Auto · ${resolved}` : MODE_LABEL[state.sceneMode];
+  btn.title = "Day / night — Auto follows your clock";
+}
+
+/**
+ * Build the walk + graze frames every grazer needs, at the three lane scales.
+ *
+ * Keyed by piece id and then by scale, so six pieces on three depths is six
+ * decodes and eighteen frame sets — measured at ~10ms and under a megabyte for
+ * a five-piece roster, which is the whole reason this feature is affordable on
+ * a page that opens a hundred times a day.
+ */
+async function buildSceneFrames(ids) {
+  const byId = {};
+  // Only the ids that actually resolved come back. An id that is not in the
+  // bundle used to still get a lane and a wander, and then drew nothing — an
+  // invisible grazer taking up one of the six places in the clearing.
+  const drawn = [];
+  for (const id of ids) {
+    const seed = await resolvePiece(lib.upeg, id, { allowNetwork: false });
+    if (seed.seed === null || seed.seed === undefined) continue;
+    drawn.push(id);
+    const grid = await lib.upeg.gridFromSeed(seed.seed);
+    // One entry per lane scale; the scene picks the one its lane was laid out
+    // for, so every sprite lands on whole device pixels with no resampling.
+    // The key stays in scene cells (2/3/4) while the render is in DEVICE pixels
+    // — multiply by the ratio here and the sprite matches the scene's unit,
+    // which is the front lane's own 4 x ratio.
+    for (const scale of lib.scene.LANE_SCALES) {
+      const frames = lib.sprite.buildRunFrames(grid, { scale: scale * deviceScale() });
+      byId[lib.scene.frameKey(id, scale)] = { walk: frames, duck: frames.duck };
+    }
+  }
+  return { byId, drawn };
+}
+
+async function bootScene() {
+  const canvas = el("scene");
+  if (!canvas || MODE !== "newtab" || !lib.scene || !lib.sprite || !lib.upeg) return;
+  const ids = state.roster.length ? state.roster : state.pieceId != null ? [state.pieceId] : [];
+  if (!ids.length) return;
+
+  const { byId: byKey, drawn } = await buildSceneFrames(ids);
+  state.sceneFrames = byKey;
+  const pal = currentPalette();
+  applySceneTokens(pal);
+  if (!drawn.length) return;
+
+  if (state.scene) state.scene.stop();
+  try {
+    state.scene = lib.scene.startScene({
+      canvas,
+      ids: drawn,
+      framesByKey: byKey,
+      palette: pal,
+      reducedMotion,
+    });
+  } catch (err) {
+    console.error("upegRUN: the clearing failed to start", err);
+    state.scene = null;
+    return;
+  }
+  paintModeButton();
+  syncSceneMotion();
+}
+
+/**
+ * THE PAUSE RULE. The clearing animates only when it is on screen, in front,
+ * and not behind the board. A new tab left open in a background window costs
+ * nothing at all — this is the difference between a nice extension and the one
+ * you uninstall because your laptop is warm.
+ */
+function syncSceneMotion() {
+  if (!state.scene) return;
+  const hidden = document.visibilityState === "hidden";
+  const playing = document.body.classList.contains("playing");
+  if (hidden || playing || reducedMotion) state.scene.pause();
+  else state.scene.play();
+}
+
+function cycleSceneMode() {
+  state.sceneMode = MODE_NEXT[state.sceneMode] || "auto";
+  const pal = currentPalette();
+  applySceneTokens(pal);
+  if (state.scene) state.scene.setPalette(pal);
+  paintModeButton();
+  setStore({ [KEY.sceneMode]: state.sceneMode });
+}
+
 /* ── score ────────────────────────────────────────────────────────────── */
 
 /** The score bar under the board is the only place the best score is shown. */
@@ -297,16 +436,33 @@ function setHint(text) {
 
 /* ── views ────────────────────────────────────────────────────────────── */
 
+/**
+ * Four views, one of which only the new tab has.
+ *
+ *   pick   first run / change peg
+ *   off    the takeover was switched off
+ *   scene  THE CLEARING — the new tab at rest: diorama, search bar, Play
+ *   play   the board
+ *
+ * The offline page has no `scene`: it boots straight to `play`, because the
+ * reason you are looking at it is that something failed and the game is the
+ * consolation. A diorama would be the wrong tone entirely.
+ */
 function showOnly(which) {
   show(el("pick"), which === "pick");
   show(el("offState"), which === "off");
+  show(el("idle"), which === "scene");
   show(el("stage"), which === "play");
   show(el("foot"), which === "play");
   show(el("controls"), which === "play");
-  // The new tab header is nothing but the piece, so it has nothing to say
-  // before one is chosen; the offline header still has to say "you're offline".
+  // The search bar stays up over the clearing and over the board; it goes away
+  // for setup and for the off card. The offline header always speaks.
   const head = document.querySelector(".head");
   if (head) head.hidden = which === "off" || (which === "pick" && MODE === "newtab");
+  // The clearing keeps running behind the resting page and stops behind the
+  // board: nobody needs a waterfall in their peripheral vision while jumping.
+  document.body.classList.toggle("playing", which === "play");
+  syncSceneMotion();
 }
 
 /* ── setup panel ──────────────────────────────────────────────────────── */
@@ -461,9 +617,19 @@ async function showPiece(id) {
     scale: Math.min(8, 4 * deviceScale()),
   });
 
+  // The new tab rests in the clearing and only builds the board when you ask
+  // for it; the offline page goes straight to the board, because that is the
+  // reason you are looking at it.
+  if (MODE === "newtab") {
+    showOnly("scene");
+    await bootScene();
+    paintHigh();
+    setText("score", "0");
+    return;
+  }
+
   showOnly("play");
   drawPortrait(state.grid);
-  // The new tab shows the piece and nothing about it — the plate is the label.
   // `pieceChip` is the offline page's, beside its Retry button.
   setText("pieceChip", `#${id}`);
   paintHigh();
@@ -484,6 +650,10 @@ async function openSettings() {
   const toggle = el("setNewtab");
   if (piece) piece.value = state.pieceId == null ? "" : String(state.pieceId);
   if (toggle) toggle.checked = state.newtabEnabled;
+  // Re-read from state each time it opens: cancelling must not leave a roster
+  // edit behind, so `saveSettings` is the only thing that writes it.
+  state.roster = cleanRoster(state.roster);
+  paintRoster();
   const note = el("setNote");
   if (note) {
     if (state.aliveCount == null && lib.upeg) {
@@ -528,6 +698,7 @@ async function saveSettings() {
     [KEY.piece]: id,
     [KEY.locked]: true,
     [KEY.newtab]: toggle ? toggle.checked : true,
+    [KEY.roster]: cleanRoster(state.roster),
   });
   if (dialog) dialog.close();
   window.location.reload();
@@ -623,6 +794,122 @@ function wireSetup() {
       showSetup("Change your peg. The one you have stays put until you lock a new one in.");
     });
   }
+}
+
+/* ── the roster ───────────────────────────────────────────────────────── */
+
+/** Ids only, deduped, capped, and every one of them a real integer. */
+function cleanRoster(list) {
+  const out = [];
+  for (const raw of Array.isArray(list) ? list : []) {
+    const id = parseId(raw);
+    if (id !== null && !out.includes(id)) out.push(id);
+    if (out.length >= ROSTER_MAX) break;
+  }
+  return out;
+}
+
+function paintRoster() {
+  const ul = el("roster");
+  if (!ul) return;
+  ul.textContent = "";
+  if (!state.roster.length) {
+    const li = document.createElement("li");
+    li.className = "rosterempty";
+    li.textContent = "Empty — your locked piece grazes alone.";
+    ul.append(li);
+  }
+  for (const id of state.roster) {
+    const li = document.createElement("li");
+    const chip = document.createElement("span");
+    chip.className = "mono";
+    chip.textContent = `#${id}`;
+    const drop = document.createElement("button");
+    drop.type = "button";
+    drop.className = "btn quiet";
+    drop.textContent = "Remove";
+    drop.setAttribute("aria-label", `Remove piece ${id} from the clearing`);
+    drop.addEventListener("click", () => {
+      state.roster = state.roster.filter((x) => x !== id);
+      paintRoster();
+    });
+    li.append(chip, drop);
+    ul.append(li);
+  }
+  const note = el("rosterNote");
+  if (note) {
+    note.textContent = `Up to ${ROSTER_MAX}. They wander, graze and doze. ${state.roster.length} in the clearing.`;
+    note.classList.remove("bad");
+  }
+  const add = el("rosterAdd");
+  if (add) add.disabled = state.roster.length >= ROSTER_MAX;
+}
+
+async function addToRoster() {
+  const input = el("rosterInput");
+  const note = el("rosterNote");
+  const id = parseId(input ? input.value : null);
+  const fail = (msg) => {
+    if (note) {
+      note.textContent = msg;
+      note.classList.add("bad");
+    }
+  };
+  if (id === null) return fail(`Ids run 1 to ${MAX_ID}.`);
+  if (state.roster.includes(id)) return fail(`#${id} is already grazing.`);
+  if (state.roster.length >= ROSTER_MAX) return fail(`The clearing holds ${ROSTER_MAX}.`);
+  // Bundle and cache only — adding a grazer must not open a socket.
+  const found = await resolvePiece(lib.upeg, id, { allowNetwork: false });
+  if (found.seed === null || found.seed === undefined) return fail(missMessage(id, found.reason));
+  state.roster.push(id);
+  if (input) input.value = "";
+  paintRoster();
+}
+
+function wireRoster() {
+  const add = el("rosterAdd");
+  if (add) add.addEventListener("click", addToRoster);
+  const input = el("rosterInput");
+  if (input) {
+    input.addEventListener("keydown", (event) => {
+      // Enter in this field adds a grazer; it must not submit the dialog and
+      // close Settings out from under you.
+      if (event.key !== "Enter") return;
+      event.preventDefault();
+      addToRoster();
+    });
+  }
+}
+
+/* ── the resting page ─────────────────────────────────────────────────── */
+
+function wireIdle() {
+  const play = el("playBtn");
+  if (play) {
+    play.addEventListener("click", () => {
+      showOnly("play");
+      drawPortrait(state.grid);
+      setHint("");
+      bootGame();
+      const canvas = el("run");
+      if (canvas) canvas.focus({ preventScroll: true });
+    });
+  }
+  const leave = el("leaveBtn");
+  if (leave) {
+    leave.addEventListener("click", () => {
+      stopGame();
+      showOnly("scene");
+    });
+  }
+  const mode = el("modeBtn");
+  if (mode) mode.addEventListener("click", cycleSceneMode);
+
+  // The pause rule: off screen, off.
+  document.addEventListener("visibilitychange", syncSceneMotion);
+  window.addEventListener("pagehide", () => {
+    if (state.scene) state.scene.pause();
+  });
 }
 
 function wireSettings() {
@@ -762,11 +1049,16 @@ function wireResize() {
     clearTimeout(timer);
     // Debounced: re-fits the board to the new size, which restarts the run.
     timer = setTimeout(() => {
+      // The clearing is laid out from the canvas size, so it re-solves too.
+      if (state.scene) state.scene.resize();
       if (!el("pick").hidden) {
         updatePreview();
         return;
       }
       if (!state.grid) return;
+      // Nothing below this belongs to the resting page: rebuilding the board
+      // while it is hidden would start a run nobody asked for.
+      if (el("stage").hidden) return;
       drawPortrait(state.grid);
       bootGame();
     }, 220);
@@ -784,8 +1076,9 @@ function wireStorage() {
       }
     }
     if (state.applyingOwnChange) return;
-    // The popup can change the piece, the lock or the takeover while a page is open.
-    if (changes[KEY.piece] || changes[KEY.newtab] || changes[KEY.locked]) {
+    // The popup can change the piece, the lock or the takeover while a page is
+    // open; another tab can change the roster.
+    if (changes[KEY.piece] || changes[KEY.newtab] || changes[KEY.locked] || changes[KEY.roster]) {
       window.location.reload();
     }
   });
@@ -798,13 +1091,26 @@ async function main() {
   wireSearch();
   wireSetup();
   wireSettings();
+  wireRoster();
+  wireIdle();
   wireKeys();
   wireResize();
   wireStorage();
 
-  const store = await getStore([KEY.piece, KEY.locked, KEY.high, KEY.newtab]);
+  const store = await getStore([
+    KEY.piece,
+    KEY.locked,
+    KEY.high,
+    KEY.newtab,
+    KEY.roster,
+    KEY.sceneMode,
+  ]);
   state.high = Number.isFinite(store[KEY.high]) ? store[KEY.high] : 0;
   state.newtabEnabled = store[KEY.newtab] !== false;
+  state.roster = cleanRoster(store[KEY.roster]);
+  state.sceneMode = ["auto", "day", "night"].includes(store[KEY.sceneMode])
+    ? store[KEY.sceneMode]
+    : "auto";
   paintHigh();
 
   if (MODE === "newtab" && !state.newtabEnabled) {

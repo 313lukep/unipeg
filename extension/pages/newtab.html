@@ -8,17 +8,19 @@
     <link rel="stylesheet" href="page.css" />
   </head>
   <body data-mode="newtab">
+    <!-- THE CLEARING. A fixed, full-viewport canvas behind everything else;
+         lib/scene.js owns it. Decorative, so it is hidden from the a11y tree —
+         nothing here is information, and the pieces in it are also listed in
+         Settings where they can actually be read and changed. -->
+    <canvas id="scene" class="scene" aria-hidden="true"></canvas>
+
     <div class="page">
-      <!-- header block: the only part that differs from offline.html -->
       <header class="head">
-        <div class="plate">
-          <canvas id="portrait" width="96" height="96" role="img" aria-label="Your Unipeg"></canvas>
-        </div>
         <div class="headtext">
           <h1 class="visually-hidden">upegRUN</h1>
-          <!-- New tab only. The offline page never shows this: a search box that
-               cannot reach anything is worse than no search box. Plain GET to
-               Google, so it still works if page.js never loads. -->
+          <!-- New tab only. The offline page never shows this: a search box
+               that cannot reach anything is worse than no search box. Plain GET
+               to Google, so it still works if page.js never loads. -->
           <form
             class="search"
             id="searchForm"
@@ -41,11 +43,16 @@
             />
             <button type="submit" class="btn solid" id="searchBtn">Search</button>
           </form>
-          <!-- Nothing else lives up here. The piece number and the best score
-               were a line under the bar; the piece is already ON the plate
-               beside it, and the score bar under the board carries both. -->
         </div>
       </header>
+
+      <!-- Resting state: the clearing is the page. Everything here is one row
+           of quiet pills so the scene keeps the screen. -->
+      <div id="idle" class="idle" hidden>
+        <button type="button" id="playBtn" class="btn solid">Play upegRUN</button>
+        <button type="button" id="modeBtn" class="btn quiet" aria-live="polite">Auto</button>
+        <button type="button" id="settingsBtn" class="btn quiet">Settings</button>
+      </div>
 
       <!-- shared block — keep byte-identical with offline.html apart from the footer link -->
       <section id="pick" class="pick" hidden>
@@ -111,8 +118,8 @@
         <span>Best <b id="best">0</b></span>
         <span class="spacer"></span>
         <a href="https://upegpfp.art" id="siteLink">upegpfp.art</a>
+        <button type="button" id="leaveBtn" class="btn quiet">Back to the clearing</button>
         <button type="button" id="changeBtn" class="btn quiet">Change peg</button>
-        <button type="button" id="settingsBtn" class="btn quiet">Settings</button>
       </footer>
 
       <!-- The controls live under the board, not inside it. In the board they
@@ -139,6 +146,29 @@
           />
           <span class="help" id="setNote"></span>
         </label>
+
+        <!-- The roster. This is also the accessible view of the clearing: the
+             canvas is aria-hidden, so this list is where the pieces in it are
+             actually named. -->
+        <div class="field">
+          <span class="label">Grazing in your clearing</span>
+          <ul class="roster" id="roster"></ul>
+          <div class="rosteradd">
+            <input
+              type="number"
+              id="rosterInput"
+              min="1"
+              max="400000"
+              step="1"
+              inputmode="numeric"
+              placeholder="add a piece"
+              aria-label="Piece number to add to the clearing"
+            />
+            <button type="button" id="rosterAdd" class="btn">Add</button>
+          </div>
+          <span class="help" id="rosterNote">Up to six. They wander, graze and doze.</span>
+        </div>
+
         <div class="field">
           <span class="label">New tab takeover</span>
           <label class="switch">

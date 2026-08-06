@@ -24,6 +24,11 @@ const strip = (src) =>
 const upeg = strip(readFileSync(`${EXT}/lib/upeg.js`, "utf8"));
 const sprite = strip(readFileSync(`${EXT}/lib/sprite.js`, "utf8"));
 const game = strip(readFileSync(`${EXT}/lib/game.js`, "utf8"));
+// scene.js joins them in one flat script scope, so its two helpers that would
+// have collided with game.js (`makeRng`, `shapeFromRows`) were renamed at the
+// source to `sceneRng` / `cellShape` rather than patched here. Checked: no
+// top-level name in scene.js clashes with upeg.js, sprite.js or game.js.
+const scene = strip(readFileSync(`${EXT}/lib/scene.js`, "utf8"));
 
 const html = `<title>upegRUN Runner — play your Unipeg</title>
 <style>
@@ -103,9 +108,17 @@ const html = `<title>upegRUN Runner — play your Unipeg</title>
      the empty one collapses, which pushed the bar 61px right of centre. Same
      reasoning and the same structure as pages/page.css.
      Plate here: 96px canvas + 10px padding each side + 1px border each side. */
-  .ntbar { --plate-w: 118px; display: grid; grid-template-columns: var(--plate-w) minmax(0, 1fr) var(--plate-w); align-items: center; column-gap: 16px; }
-  @media (max-width: 860px) { .ntbar { grid-template-columns: auto minmax(0, 1fr); } }
-  .ntbody { min-width: 0; }
+  .ntbar { display: block; }
+  .ntbar .search { max-width: 640px; margin: 0 auto; }
+  .idle { display: flex; justify-content: center; gap: 12px; flex-wrap: wrap; }
+  /* The clearing: a fixed canvas behind everything, exactly as the extension
+     mounts it. Click-through, so it can never eat a press meant for the page. */
+  .scene { position: fixed; inset: 0; z-index: -1; width: 100%; height: 100%; image-rendering: pixelated; pointer-events: none; }
+  body.playing .scene { opacity: 0.35; }
+  /* Glass over the scene, so a pill never lands invisibly on grass. */
+  .search input[type="search"], .idle button, .hud, .controls, .panel { backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); }
+  .chip { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--mute); border-radius: 999px; padding: 4px 6px 4px 12px; font-size: 13px; }
+  .chip button { min-height: 28px; padding: 2px 10px; font-size: 11px; }
   #ntPortrait { image-rendering: pixelated; border-radius: 8px; background: var(--paper); }
   .plate { flex: none; background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 10px; line-height: 0; }
   /* stretch, not center — the input's box is taller than the button's fixed
@@ -144,10 +157,15 @@ const html = `<title>upegRUN Runner — play your Unipeg</title>
   .err { color: var(--pink); font-size: 13px; min-height: 1.2em; }
   .hidden { display: none !important; }
   kbd { background: var(--paper); border: 1px solid var(--mute); border-bottom-width: 2px; border-radius: 5px; padding: 1px 6px; font: inherit; font-size: 12px; color: var(--ink); }
-  footer { color: var(--mute); font-size: 12px; }
+  /* Pushed to the bottom, so the credit line does not float in the middle of
+     the sky once the board is put away and the clearing is the page. */
+  .wrap { min-height: 100vh; }
+  footer { color: var(--mute); font-size: 12px; margin-top: auto; }
   footer a { color: var(--pink); }
   @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
 </style>
+
+<canvas id="scene" class="scene" aria-hidden="true"></canvas>
 
 <div class="wrap">
   <header>
@@ -156,29 +174,31 @@ const html = `<title>upegRUN Runner — play your Unipeg</title>
   </header>
 
   <div class="ntbar hidden" id="ntbar">
-    <div class="plate"><canvas id="ntPortrait" width="96" height="96" role="img" aria-label="Your Unipeg"></canvas></div>
-    <div class="ntbody">
-      <form class="search" id="searchForm" role="search" action="https://www.google.com/search"
-            method="get" target="_blank" rel="noopener">
-        <input type="search" id="searchInput" name="q" placeholder="Search Google"
-               aria-label="Search Google" autocomplete="off" spellcheck="false" enterkeyhint="search" />
-        <button type="submit">SEARCH</button>
-      </form>
-      <!-- Nothing else up here: the piece is on the plate beside the bar, and
-           the score bar under the board carries the number and the best. -->
-    </div>
+    <form class="search" id="searchForm" role="search" action="https://www.google.com/search"
+          method="get" target="_blank" rel="noopener">
+      <input type="search" id="searchInput" name="q" placeholder="Search Google"
+             aria-label="Search Google" autocomplete="off" spellcheck="false" enterkeyhint="search" />
+      <button type="submit">SEARCH</button>
+    </form>
+  </div>
+
+  <div class="idle hidden" id="idle">
+    <button id="playBtn" class="primary">PLAY UPEGRUN</button>
+    <button id="modeBtn">AUTO</button>
+    <button id="changeBtn2">EDIT THE CLEARING</button>
   </div>
 
   <section class="panel" id="setup">
     <div class="row">
       <label for="pieceInput">Your peg</label>
       <input id="pieceInput" type="number" inputmode="numeric" min="1" placeholder="e.g. 37" />
-      <button id="loadBtn" class="pink">PREVIEW</button>
+      <button id="loadBtn" class="pink">ADD</button>
       <button id="randomBtn">RANDOM</button>
     </div>
+    <div class="row" id="rosterRow"></div>
     <div class="err" id="err"></div>
     <div class="row">
-      <button id="lockBtn" class="primary hidden">LOCK IN &amp; PLAY</button>
+      <button id="lockBtn" class="primary hidden">ENTER THE CLEARING</button>
     </div>
     <div class="hint" id="aliveLine"></div>
   </section>
@@ -224,6 +244,7 @@ const html = `<title>upegRUN Runner — play your Unipeg</title>
 ${upeg}
 ${sprite}
 ${game}
+${scene}
 
 // ── page ────────────────────────────────────────────────────────────────
 // Same object pages/page.js hands to startGame — light column, keys unchanged.
@@ -231,7 +252,8 @@ const PALETTE = { paper: "#ffffff", ink: "#0b0b0d", pink: "#d8006e", mute: "#666
 const el = (id) => document.getElementById(id);
 const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 const deviceScale = () => Math.max(1, Math.min(3, Math.round(window.devicePixelRatio || 1)));
-const state = { id: null, grid: null, frames: null, palette: [], game: null };
+const state = { id: null, grid: null, frames: null, palette: [], game: null, roster: [], scene: null, mode: "auto" };
+const ROSTER_MAX = 6;
 
 function fitCanvas(canvas, w, h) {
   const r = deviceScale();
@@ -246,41 +268,103 @@ function setBest(n) {
   el("high").textContent = String(n);
 }
 
-// One portrait on the page, and it lives in the header beside the search bar —
-// the piece you are DISPLAYING. The one on the board is a different animal.
-function drawPortrait(grid) {
-  const c = el("ntPortrait");
-  const cell = 4 * deviceScale();
-  c.width = 24 * cell; c.height = 24 * cell;
-  c.style.width = c.style.height = 24 * 4 + "px";
-  const ctx = c.getContext("2d");
-  ctx.imageSmoothingEnabled = false;
-  drawGrid(ctx, grid, cell, 0, 0);
+/* ── the clearing ────────────────────────────────────────────────────── */
+
+// The page's own colours follow the scene's, exactly as pages/page.js does it:
+// the chrome floats over the clearing, so if the sky goes dark and the tokens
+// do not, the search bar is black text on a black field.
+function applySceneTokens(pal) {
+  const r = document.documentElement.style;
+  const night = pal.name === "night";
+  r.setProperty("--ink", pal.ink);
+  r.setProperty("--paper", pal.paper);
+  r.setProperty("--mute", night ? "#A8A5B4" : "#5A5763");
+  r.setProperty("--card", night ? "rgba(20,20,28,0.72)" : "rgba(255,255,255,0.78)");
+  r.setProperty("--line", night ? "rgba(247,247,248,0.16)" : "rgba(11,11,13,0.12)");
+  r.setProperty("--pink", night ? "#FF4DA1" : "#C4005F");
+  document.documentElement.style.colorScheme = night ? "dark" : "light";
 }
 
-async function preview(id) {
+function paintRoster() {
+  const row = el("rosterRow");
+  row.textContent = "";
+  for (const id of state.roster) {
+    const chip = document.createElement("span");
+    chip.className = "chip";
+    const n = document.createElement("span");
+    n.textContent = "#" + id;
+    const x = document.createElement("button");
+    x.textContent = "REMOVE";
+    x.onclick = () => { state.roster = state.roster.filter((v) => v !== id); paintRoster(); };
+    chip.append(n, x);
+    row.append(chip);
+  }
+  el("lockBtn").classList.toggle("hidden", state.roster.length === 0);
+  el("loadBtn").disabled = state.roster.length >= ROSTER_MAX;
+}
+
+async function bootScene() {
+  const byKey = {};
+  for (const id of state.roster) {
+    const grid = gridFromSeed(await seedForId(id));
+    for (const s of LANE_SCALES) {
+      const f = buildRunFrames(grid, { scale: s * deviceScale() });
+      byKey[frameKey(id, s)] = { walk: f, duck: f.duck };
+    }
+  }
+  const pal = paletteFor(state.mode, new Date().getHours());
+  applySceneTokens(pal);
+  if (state.scene) state.scene.stop();
+  state.scene = startScene({
+    canvas: el("scene"), ids: state.roster, framesByKey: byKey, palette: pal, reducedMotion: reduced,
+  });
+  el("modeBtn").textContent =
+    state.mode === "auto" ? "AUTO · " + resolveMode("auto", new Date().getHours()) : state.mode;
+}
+
+// The pause rule: off screen, off. Same rule the extension ships.
+function syncSceneMotion() {
+  if (!state.scene) return;
+  if (document.visibilityState === "hidden" || document.body.classList.contains("playing") || reduced) {
+    state.scene.pause();
+  } else {
+    state.scene.play();
+  }
+}
+document.addEventListener("visibilitychange", syncSceneMotion);
+
+async function addPeg(id) {
   el("err").textContent = "";
   const seed = await seedForId(id);
   if (seed === null) {
-    el("ntbar").classList.add("hidden");
-    el("lockBtn").classList.add("hidden");
     el("err").textContent = "#" + id + " isn't in the offline collection — try another number.";
     return false;
   }
-  state.id = id;
-  state.grid = gridFromSeed(seed);
-  state.palette = paletteFromGrid(state.grid);
-  drawPortrait(state.grid);
-  el("ntbar").classList.remove("hidden");
-  el("lockBtn").classList.remove("hidden");
+  if (state.roster.includes(id)) { el("err").textContent = "#" + id + " is already grazing."; return false; }
+  if (state.roster.length >= ROSTER_MAX) { el("err").textContent = "The clearing holds " + ROSTER_MAX + "."; return false; }
+  state.roster.push(id);
+  // The first piece added is the one the runner uses.
+  if (state.id === null) { state.id = id; state.grid = gridFromSeed(seed); state.palette = paletteFromGrid(state.grid); }
+  paintRoster();
   return true;
 }
 
+async function enterClearing() {
+  el("setup").classList.add("hidden");
+  el("ntbar").classList.remove("hidden");
+  el("idle").classList.remove("hidden");
+  await bootScene();
+  syncSceneMotion();
+}
+
 async function play() {
+  document.body.classList.add("playing");
+  syncSceneMotion();
   state.frames = buildRunFrames(state.grid, { scale: Math.min(8, 4 * deviceScale()) });
   el("stage").classList.remove("hidden");
   el("hud").classList.remove("hidden");
   el("controls").classList.remove("hidden");
+  el("idle").classList.add("hidden");
   el("setup").classList.add("hidden");
   const stage = el("stage");
   const canvas = el("run");
@@ -304,22 +388,39 @@ async function play() {
   canvas.focus();
 }
 
-el("loadBtn").onclick = () => preview(Number(el("pieceInput").value));
-el("pieceInput").onkeydown = (e) => { if (e.key === "Enter") el("loadBtn").click(); };
+el("loadBtn").onclick = () => addPeg(Number(el("pieceInput").value));
+el("pieceInput").onkeydown = (e) => { if (e.key === "Enter") { e.preventDefault(); el("loadBtn").click(); } };
 el("randomBtn").onclick = async () => {
   const ids = await aliveIds();
   const id = ids[Math.floor(Math.random() * ids.length)];
   el("pieceInput").value = String(id);
-  preview(id);
+  addPeg(id);
 };
-el("lockBtn").onclick = () => play();
-// The header stays put — you are still displaying a piece, so the piece and the
-// search bar stay where they are. Only the board goes away.
+el("lockBtn").onclick = () => enterClearing();
+el("playBtn").onclick = () => play();
+el("modeBtn").onclick = () => {
+  state.mode = { auto: "day", day: "night", night: "auto" }[state.mode];
+  const pal = paletteFor(state.mode, new Date().getHours());
+  applySceneTokens(pal);
+  if (state.scene) state.scene.setPalette(pal);
+  el("modeBtn").textContent =
+    state.mode === "auto" ? "AUTO · " + resolveMode("auto", new Date().getHours()) : state.mode;
+};
+// Leaving the board puts you back in the SAME clearing — the scene kept its
+// state while it was paused, so nobody's pieces teleport.
 el("changeBtn").onclick = () => {
   if (state.game) { state.game.stop(); state.game = null; }
+  document.body.classList.remove("playing");
   el("stage").classList.add("hidden");
   el("hud").classList.add("hidden");
   el("controls").classList.add("hidden");
+  el("idle").classList.remove("hidden");
+  syncSceneMotion();
+};
+el("changeBtn2").onclick = () => {
+  if (state.scene) { state.scene.stop(); state.scene = null; }
+  el("ntbar").classList.add("hidden");
+  el("idle").classList.add("hidden");
   el("setup").classList.remove("hidden");
 };
 
@@ -336,8 +437,10 @@ el("searchInput").addEventListener("keydown", (e) => {
   el("searchInput").blur();
   el("run").focus();
 });
-// Height counts as well as width: the board is bounded by calc(100vh - …).
+// Height counts as well as width: the board is bounded by calc(100vh - …), and
+// the clearing is laid out from its canvas size, so both re-solve.
 window.addEventListener("resize", () => {
+  if (state.scene) state.scene.resize();
   if (!state.game) return;
   const stage = el("stage");
   fitCanvas(el("run"), stage.clientWidth, stage.clientHeight);
@@ -345,11 +448,17 @@ window.addEventListener("resize", () => {
 
 (async () => {
   const n = await aliveCount();
-  el("aliveLine").textContent = n.toLocaleString() + " pieces bundled — all searchable with no connection.";
+  el("aliveLine").textContent =
+    n.toLocaleString() + " pieces bundled — all searchable with no connection. Add up to " +
+    ROSTER_MAX + " to the clearing.";
   const ids = await aliveIds();
-  const start = ids.includes(185206) ? 185206 : ids[0];
-  el("pieceInput").value = String(start);
-  await preview(start);
+  // Four to start with, spread across the collection, so the clearing has
+  // something in it the moment the page opens.
+  const seed = [185206, ids[0], ids[Math.floor(ids.length / 3)], ids[ids.length - 1]];
+  for (const id of seed) if (ids.includes(id)) await addPeg(id);
+  el("pieceInput").value = String(ids[Math.floor(ids.length / 2)]);
+  paintRoster();
+  await enterClearing();
 })();
 </script>
 `;
