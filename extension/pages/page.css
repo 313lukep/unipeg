@@ -53,33 +53,6 @@ canvas {
   image-rendering: pixelated;
 }
 
-/* ── the clearing ──────────────────────────────────────────────────────── */
-
-/* A fixed, full-viewport canvas UNDER everything. `position: fixed` rather than
-   absolute so it never participates in the page's flow and can never make the
-   page scroll; `z-index: -1` puts it behind the chrome without needing a stack
-   on every other element. lib/scene.js owns its pixels; page.js owns its
-   palette, and pushes the same palette into the tokens below so the chrome over
-   it stays legible when the sky goes dark. */
-.scene {
-  position: fixed;
-  inset: 0;
-  z-index: -1;
-  display: block;
-  width: 100%;
-  height: 100%;
-  image-rendering: pixelated;
-  /* The scene is decoration. It must never eat a click meant for the page. */
-  pointer-events: none;
-}
-
-/* While the board is up, the clearing is dimmed rather than destroyed: the
-   scene keeps its state (and stops animating — see syncSceneMotion) so leaving
-   the game puts you back in the same clearing, not a fresh one. */
-body.playing .scene {
-  opacity: 0.35;
-}
-
 /* ── shell ─────────────────────────────────────────────────────────────── */
 
 .page {
@@ -184,32 +157,42 @@ body.playing .scene {
    It is a plain GET form to google.com/search, so it works with page.js dead;
    page.js only adds the empty-query guard and the offline state.
 
-   CENTRED, AND THE ONLY THING IN THE HEADER. The new tab used to carry a
-   portrait plate beside the bar, which needed a three-column grid with an empty
-   balancing column to keep the bar on the page's centre line. The clearing made
-   the plate redundant — your pieces are IN the scene now, grazing — so the
-   header is one centred block and the arithmetic goes away with it.
+   CENTRED ON THE PAGE, not on the space left over beside the plate. The header
+   is a three-column grid: the plate in the first, the search in the second, and
+   an empty third column exactly as wide as the plate. Two equal outer tracks
+   put the middle track's centre on the page's centre, and the middle takes
+   every pixel they leave — wide AND centred, which is the whole ask.
+
+   The outer tracks are a fixed --plate-w rather than `1fr`. `1fr 1fr` looks
+   like it should balance and does not: an fr track whose min-content exceeds
+   its share freezes at min-content and the leftover is redistributed, so the
+   plate's column stayed 122px while the empty one collapsed to 0 and the bar
+   sat 61px right of centre. Measured, not guessed.
 
    Scoped to the new tab: offline.html's header is a headline and a paragraph,
-   which want the full measure and no centring. */
+   which want the full measure. */
 body[data-mode="newtab"] .head {
-  display: block;
+  /* canvas 24 cells x 4px = 96, + 12px padding each side, + 1px border each
+     side. Kept in step with portraitTarget()'s basePx in pages/page.js; the
+     browser check in the round-4 verification asserts the two agree. */
+  --plate-w: 122px;
+  display: grid;
+  grid-template-columns: var(--plate-w) minmax(0, 1fr) var(--plate-w);
+  align-items: center;
+  /* Tighter than the 28px the offline header uses: every pixel taken out of
+     the two gutters is a pixel the bar gets, and it is the only thing in the
+     row now. */
+  column-gap: 16px;
 }
 
-/* THE BAR SITS IN THE SKY, NOT ON THE HORIZON.
-   `.page` centres its content vertically, which put the search bar exactly on
-   the scene's horizon line — through the far trees and the tree line. Resting
-   on the new tab, the chrome is pushed into the upper third instead, where the
-   sky is deliberately empty. When the board is up the page centres again,
-   because then the board is the content. */
-body[data-mode="newtab"]:not(.playing) .page {
-  justify-content: flex-start;
-  padding-top: clamp(56px, 15vh, 170px);
-}
-
-body[data-mode="newtab"] .search {
-  max-width: 640px;
-  margin: 0 auto;
+/* Under ~860px the balancing column costs more field than the centring buys —
+   at 580px it would leave about 110px to actually type in. Below it the bar
+   simply takes everything beside the plate. This is a header-only breakpoint;
+   the page's other small-screen rules still switch at 560px. */
+@media (max-width: 860px) {
+  body[data-mode="newtab"] .head {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
 }
 
 .search {
@@ -273,76 +256,6 @@ body[data-mode="newtab"] .search {
 .search[data-offline] .btn {
   opacity: 0.55;
   cursor: not-allowed;
-}
-
-/* ── the resting page: one row of pills over the clearing ──────────────── */
-
-.idle {
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  gap: 12px;
-  flex-wrap: wrap;
-}
-
-/* Every pill that floats over the scene gets a blurred glass back. Without it,
-   a Search or Play button lands on grass and reads as part of the picture.
-   --card is set from the scene palette in page.js and is deliberately
-   translucent, so this is one rule for day and night both. */
-.search input[type="search"],
-.idle .btn,
-.foot,
-.controls {
-  backdrop-filter: blur(6px);
-  -webkit-backdrop-filter: blur(6px);
-}
-
-.idle .btn.quiet,
-.foot,
-.controls {
-  background: var(--card);
-}
-
-.foot,
-.controls {
-  border-radius: 999px;
-  padding-left: 18px;
-  padding-right: 18px;
-}
-
-/* ── the roster, in Settings ───────────────────────────────────────────── */
-
-.roster {
-  list-style: none;
-  margin: 0 0 10px;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.roster li {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 4px 0 4px 10px;
-  border: 1px solid var(--line);
-  border-radius: 999px;
-}
-
-.roster .rosterempty {
-  justify-content: flex-start;
-  border-style: dashed;
-  color: var(--mute);
-  padding: 10px 14px;
-  font-size: 13px;
-}
-
-.rosteradd {
-  display: flex;
-  gap: 8px;
-  align-items: center;
 }
 
 /* ── the controls, under the board ─────────────────────────────────────── */
@@ -803,15 +716,25 @@ dialog h2 {
     gap: 18px;
   }
 
-  /* The offline header still stacks a plate beside its copy; top-align keeps
-     the plate level with the headline rather than floating mid-block. */
   .head {
     gap: 18px;
+  }
+
+  /* The plate already eats 120px of a narrow window — let the Search pill drop
+     to its own line rather than squeezing the field to nothing. Once the header
+     is two rows tall, centring floats the plate against nothing; top-align puts
+     it level with the field instead. */
+  .head {
     align-items: flex-start;
   }
 
-  /* Let the Search pill drop to its own line rather than squeezing the field to
-     nothing on a narrow window. */
+  /* The two-column fallback is already in force from 860px down; here it only
+     needs to stop centring its rows, so the plate lines up with the field
+     rather than floating against a two-row block. */
+  body[data-mode="newtab"] .head {
+    align-items: start;
+  }
+
   .search {
     flex-wrap: wrap;
   }

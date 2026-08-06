@@ -9,8 +9,8 @@ It works with the network completely off. That is the whole point.
 ## What it does
 
 **New tab takeover.** `chrome_url_overrides.newtab` points at `pages/newtab.html`, so
-every new tab is a clearing your pieces graze in, with a Google search bar over it and
-upegRUN one button away.
+every new tab is your piece: the artwork on a plate, a Google search bar beside it, and a
+board you can play on.
 
 **Offline redirect.** The service worker watches for failed top-level navigations. When
 the failure genuinely means "this machine has no network" it sends that tab to
@@ -105,19 +105,14 @@ The [optional fetch](#pieces-minted-after-this-build) is a *lookup*, not a rende
 only tell us the seed of a piece minted after this build. Once a seed is known — from the
 bundle or from that one fetch — drawing it never touches the network again.
 
-## The look
+## The look: light, and committed to it
 
-**The offline page and the popup are white**, and committed to it: no theme toggle, no
-`prefers-color-scheme` branch. They sit alongside Chrome's own offline page and the
-website's light mode.
+**The pages are white.** Not "white by default" — there is no theme toggle and no
+`prefers-color-scheme` branch. The new tab, the offline page, the popup and the
+standalone playable build all commit to light the same way an earlier round committed to
+dark, which puts them alongside Chrome's own offline page and the website's light mode.
 
-**The new tab is the exception, and it is driven by the clearing.** Its tokens are set
-from the scene's palette at runtime (see [The clearing](#the-clearing)) because the chrome
-floats over the diorama — a page that stayed white while the sky went to midnight would be
-black text on a black field. `--card` and `--line` go translucent there too, so the pills
-read as glass on the scene rather than as opaque cards punched through it.
-
-The base tokens are `docs/DESIGN.md`'s **light** column, set once on `:root` in
+The tokens are `docs/DESIGN.md`'s **light** column, set once on `:root` in
 `pages/page.css` and mirrored as the `PALETTE` object `pages/page.js` hands to
 `startGame`, so the board paints on the same ground as the page around it:
 
@@ -238,8 +233,6 @@ piece someone had already chosen. A prefix is not a brand.
 | `upegpfp.pieceId` | number | Your piece. Ids are global mint serials, validated 1–400000. |
 | `upegpfp.pieceLocked` | boolean | Set by **Lock in**. While `true` the pages boot straight into the piece; **Change peg** sets it `false` and setup returns. A piece saved before this key existed counts as locked — nobody is asked to set up a thing they already set up. |
 | `upegpfp.aliveExtra` | object | id → seed for pieces fetched from `upegpfp.art` that the bundled snapshot predates. Stored as a diff, not a second copy — usually empty. |
-| `upegpfp.roster` | array | Up to six piece ids grazing in the clearing. Empty means your locked piece grazes alone. |
-| `upegpfp.sceneMode` | string | `auto` (follow the clock), `day` or `night`. |
 | `upegpfp.highScore` | number | Best run. |
 | `upegpfp.newtabEnabled` | boolean | New tab takeover, default `true`. |
 
@@ -257,7 +250,6 @@ popup.html/.js     toolbar popup — piece, toggle, best run, play, change peg
 lib/upeg.js        seed → 24×24 grid, bundled snapshot lookup
 lib/sprite.js      run frames, background keyed out, grid drawing
 lib/game.js        the endless runner
-lib/scene.js       the clearing — palettes, scenery, water, layout, the wander
 data/              layer rectangles + id → seed snapshot
 icons/             16/48/128, rendered from piece #185206
 ```
@@ -265,69 +257,6 @@ icons/             16/48/128, rendered from piece #185206
 There is **no build step**. The extension loads unpacked exactly as it sits: plain ES
 modules, no npm dependencies, no bundler, no minifier. Edit a file, hit reload on
 `chrome://extensions`.
-
-## The clearing
-
-The new tab at rest is a diorama, not a running world: a waterfall on the left, a
-broadleaf tree on the right, and up to six of your pieces wandering, grazing and dozing
-along the bottom half. `lib/scene.js` owns it; `pages/page.css` gives it a fixed,
-click-through canvas behind everything else.
-
-**It is a diorama on purpose.** A new tab opens a hundred times a day. An endless
-side-scroller is exhausting at that frequency and fights the search bar for attention;
-a place you glance at is not. The game is still there — it is the **Play upegRUN**
-button, and it still takes over the moment a navigation fails.
-
-**Depth is staged, never tinted.** There is no 3/4 view of a Unipeg — the art is one
-side-on 24×24 grid, and inventing another angle means inventing pixels. So distance is
-read from three integer lane scales (2, 3 and 4 device px per art cell), from overlap,
-and from painter's-algorithm ordering: a piece in the front lane walks *in front of* the
-hero tree, one in the back walks behind it. A far piece is a genuinely smaller pixel grid
-rendered from the same seed, never a big one shrunk.
-
-**The pieces are never recoloured.** The invented scenery is tinted for day and night all
-it likes. A Unipeg is drawn in exactly the colours the contract gives it, at every
-distance, in both modes. The browser check asserts the piece's own hexes land on the
-canvas verbatim in day *and* night.
-
-**Day and night** follow the machine's clock — light from 06:00 to 18:00 — with a manual
-override cycling Auto → Day → Night. The scene's palette also drives the page's tokens,
-because the chrome floats over the clearing: if the sky went near-black and `--ink` did
-not follow, the search bar would be black text on a black field.
-
-**It runs at 12fps, and stops when you are not looking.** Pixel art animates on twos and
-threes; 12fps is what the medium actually looks like, and it costs about a twelfth of a
-naive rAF loop. On top of that the clearing pauses on `visibilitychange`, pauses behind
-the board while you play, and never starts at all under `prefers-reduced-motion`. A new
-tab left open in a background window costs nothing — this is the difference between a
-nice extension and the one you uninstall because your laptop is warm.
-
-**The water is a pure function.** `waterCell(x, y, t)` returns a palette key, and the
-whole flow is the identity `waterCell(x, y, t) === waterCell(x, y-1, t-1)` — the streaks
-move down exactly one whole cell per tick. No sub-pixel scroll, no gradient, nothing to
-resample. `x * 3` shears the comb so the streaks never line up into stripes across the
-fall. `streamCell` is the same trick turned ninety degrees: `streamCell(x, y, t) ===
-streamCell(x-1, y, t-1)`, flowing right.
-
-**The stream meanders, and the meander is what sets the falls back.** `streamCenter(x)`
-sums two cosines of different periods and then *rounds to a whole cell* — the shape is
-continuous, the output never is. Both terms peak together at one column and nowhere else,
-and that column is the middle of the falls, so the channel is at its furthest point back
-exactly where the water lands and swings toward the viewer as it runs off right. The
-waterfall is not pushed anywhere; the stream arrives at it from the back of the clearing.
-
-The amplitude is bounded by the lane gap, and a test walks **every column** asserting the
-channel and both its banks stay between the middle lane's feet and the front lane's. A
-single-`y` check would have passed a bend that swings out and drowns a grazer.
-
-**The scenery is drawn, the pieces are on-chain.** The tree, the cliff, the tufts and the
-flowers are hand-drawn on the same cell lattice as the art — the same thing `lib/game.js`
-already does for the Ethereum marks. Decoration is drawn; the artefact is fetched. That
-line is the one that matters and `scene.js` does not cross it.
-
-Pieces are chosen in **Settings → Grazing in your clearing** (up to six, stored in
-`upegpfp.roster`). The canvas is `aria-hidden` — it is decoration — so that list is also
-the accessible view of what is in the scene.
 
 ## The new tab's search bar
 
