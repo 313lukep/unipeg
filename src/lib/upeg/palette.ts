@@ -18,3 +18,11 @@ export const UPEG_COLORS = [
 export const UPEG_BACKGROUND_COLORS = [
   "#1a1c2c", "#3a3f58", "#cbbba0", "#7a8ca8", "#394b3f", "#2e243f",
 ] as const;
+
+/**
+ * The background of the official @unipegv4 X avatar, sampled from the artwork
+ * itself (400x400, every border pixel #cbdbfc). Not an arbitrary brand colour:
+ * it is UPEG_COLORS[1] (and [21] — the duplicate the contract really carries),
+ * so "match the official pfp" is exact, not approximated.
+ */
+export const OFFICIAL_PFP_BG = "#cbdbfc";

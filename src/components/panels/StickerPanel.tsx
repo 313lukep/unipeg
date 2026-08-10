@@ -42,6 +42,7 @@ import {
   type ReactNode,
 } from "react";
 import type { CellRect, Grid } from "@/lib/grid";
+import { OFFICIAL_PFP_BG } from "@/lib/upeg/palette";
 import {
   composeStickerCanvas,
   EMPTY_MASK_REASON,
@@ -73,7 +74,9 @@ export type StickerProviderProps = {
 };
 
 /** Owner amendment: exactly three background options. */
-type BgMode = "black" | "white" | "piece-bg";
+/** 'official' is the background of the official @unipegv4 avatar — #CBDBFC,
+ *  which is contract colour 1/21, so the match is exact rather than eyeballed. */
+type BgMode = "black" | "white" | "piece-bg" | "official";
 /** Owner rule: outlines are white or black, nothing else. */
 type OutlineColour = "#ffffff" | "#000000";
 type ExportSize = 400 | 1000 | 2000;
@@ -278,7 +281,12 @@ function useStickerEngine({
           ? { mode: "piece-bg" as const }
           : {
               mode: "solid" as const,
-              colour: bgMode === "black" ? "#000000" : "#ffffff",
+              colour:
+                bgMode === "black"
+                  ? "#000000"
+                  : bgMode === "official"
+                    ? OFFICIAL_PFP_BG
+                    : "#ffffff",
             },
       shadow: { on: shadowOn, opacity: shadowStrength / 100 },
       scale: sizeInFrame / 100,
@@ -722,6 +730,14 @@ export function StickerControls() {
             onClick={() => s.setBgMode("piece-bg")}
           >
             PIECE BG
+          </Pill>
+          <Pill
+            variant={s.bgMode === "official" ? "active" : "card"}
+            aria-pressed={s.bgMode === "official"}
+            onClick={() => s.setBgMode("official")}
+            title="The official @unipegv4 avatar background — #CBDBFC"
+          >
+            OFFICIAL
           </Pill>
         </div>
 

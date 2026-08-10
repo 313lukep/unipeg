@@ -29,6 +29,7 @@ import {
   type ReactNode,
 } from "react";
 import { contentBounds, detectBackground } from "@/lib/grid";
+import { OFFICIAL_PFP_BG } from "@/lib/upeg/palette";
 import type { Grid } from "@/lib/grid";
 import {
   composeFullBodyPreview,
@@ -41,13 +42,15 @@ import CellSlider from "@/components/ui/CellSlider";
 
 const SIZES: FullBodySize[] = [400, 1000, 2000];
 
-/** Owner amendment: exactly three background options, same as the sticker.
- *  AUTO = the piece's own detected background (exporter opts bg: undefined). */
-type FullBodyBgMode = "auto" | "black" | "white";
+/** Owner amendments: AUTO = the piece's own detected background (exporter opts
+ *  bg: undefined); OFFICIAL = the background of the official @unipegv4 avatar,
+ *  #CBDBFC — which is contract colour 1/21, so the match is exact. */
+type FullBodyBgMode = "auto" | "black" | "white" | "official";
 const BG_PILLS: { mode: FullBodyBgMode; label: string }[] = [
   { mode: "auto", label: "AUTO" },
   { mode: "black", label: "BLACK" },
   { mode: "white", label: "WHITE" },
+  { mode: "official", label: "OFFICIAL" },
 ];
 const DEFAULT_ROOM_PCT = 12;
 const FULL_RES_TARGET_PX = 480;
@@ -138,7 +141,13 @@ function useFullBodyEngine({
 
   // AUTO plumbs through as bg: undefined — the exporter detects for itself.
   const bgOverride =
-    bgMode === "black" ? "#000000" : bgMode === "white" ? "#ffffff" : undefined;
+    bgMode === "black"
+      ? "#000000"
+      : bgMode === "white"
+        ? "#ffffff"
+        : bgMode === "official"
+          ? OFFICIAL_PFP_BG
+          : undefined;
   const effectiveBg = bgOverride ?? detectedBg;
 
   // Pure pre-flight validation (no canvas) so the render effect never has to
