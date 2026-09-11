@@ -1,0 +1,11 @@
+{
+  "blockNumber": 25956769,
+  "scannedAt": "2026-09-11T21:13:38.050Z",
+  "holdersCount": 1308,
+  "failures": 0,
+  "aliveCount": 6861,
+  "everMinted": 402516,
+  "idMin": 28,
+  "idMax": 402516,
+  "method": "full holder scan (Holder x HoldersCount, OwnerUpegsPage)"
+}
